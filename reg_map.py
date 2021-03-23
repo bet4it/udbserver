@@ -1,0 +1,28 @@
+from unicorn.x86_const import *
+
+reg_map_x64 = [
+    [UC_X86_REG_RAX,     8],
+    [UC_X86_REG_RBX,     8], 
+    [UC_X86_REG_RCX,     8], 
+    [UC_X86_REG_RDX,     8],
+    [UC_X86_REG_RSI,     8], 
+    [UC_X86_REG_RDI,     8],
+    [UC_X86_REG_RBP,     8],
+    [UC_X86_REG_RSP,     8], 
+    [UC_X86_REG_R8,      8],
+    [UC_X86_REG_R9,      8], 
+    [UC_X86_REG_R10,     8],
+    [UC_X86_REG_R11,     8],
+    [UC_X86_REG_R12,     8], 
+    [UC_X86_REG_R13,     8], 
+    [UC_X86_REG_R14,     8],
+    [UC_X86_REG_R15,     8],
+    [UC_X86_REG_RIP,     8],
+    [UC_X86_REG_EFLAGS,  4], 
+    [UC_X86_REG_CS,      4], 
+    [UC_X86_REG_SS,      4],
+    [UC_X86_REG_DS,      4], 
+    [UC_X86_REG_ES,      4], 
+    [UC_X86_REG_FS,      4],
+    [UC_X86_REG_GS,      4], 
+]
