@@ -1,5 +1,9 @@
+import os
 import socket
 import struct
+import tempfile
+from binascii import unhexlify
+
 from unicorn import *
 from .reg_map import reg_map_x64
 
@@ -14,16 +18,14 @@ class UnicornGdbserver():
         self.step_hook = None
         self.bp_hooks = {}
         self.reg_map = reg_map_x64
+        fd, self.maps_file = tempfile.mkstemp()
+        os.close(fd)
 
-    def addr_to_str(self, addr, size, endian="big"):
-        if size == 8:
-            addr = (hex(int.from_bytes(struct.pack("Q", addr), byteorder=endian)))
-            addr = '{:0>16}'.format(addr[2:])
-        elif size == 4:
-            addr = (hex(int.from_bytes(struct.pack("I", addr), byteorder=endian)))
-            addr = ('{:0>8}'.format(addr[2:]))
-        addr = str(addr)    
-        return addr
+    def addr_to_str(self, addr, size):
+        return addr.to_bytes(size, byteorder='little').hex()
+
+    def bin_to_escstr(self, rawbin):
+        return rawbin.replace(b'}', b'}]').replace(b'*', b'}\n').replace(b'$', b'}\x03').replace(b'#', b'}\x04')
 
     def setup_server(self):
         print("udb> Listening on %s:%u" % (self.ip, self.port))
@@ -38,6 +40,7 @@ class UnicornGdbserver():
         self.netout         = clientsocket.makefile('w')
 
     def close(self):
+        os.remove(self.maps_file)
         self.netin.close()
         self.netout.close()
         self.clientsocket.close()
@@ -66,8 +69,9 @@ class UnicornGdbserver():
                 self.stop_state = False
 
             def handle_D(subcmd):
-                self.stop_state = False
                 self.send('OK')
+                self.stop_state = False
+                self.close()
 
             def handle_g(subcmd):
                 s = ''
@@ -88,13 +92,8 @@ class UnicornGdbserver():
                 addr = int(addr, 16)
                 size = int(size, 16)
                 try:
-                    tmp = ''
-                    for s in range(size):
-                        mem = self.uc.mem_read(addr + s, 1)
-                        mem = "".join(
-                            [str("{:02x}".format(ord(c))) for c in mem.decode('latin1')])
-                        tmp += mem
-                    self.send(tmp)
+                    mem = self.uc.mem_read(addr, size).hex()
+                    self.send(mem)
                 except:
                     self.send('E14')
 
@@ -117,32 +116,30 @@ class UnicornGdbserver():
                     reg_value = self.addr_to_str(reg_value, reg[1])
                     self.send(reg_value)
                 except:
-                    self.close()
-                    raise
+                    self.send('E01')
 
             def handle_P(subcmd):
-                reg_index, reg_data = subcmd.split('=')
-                reg_index = int(reg_index, 16)
-                reg_data = int(reg_data, 16)
-                reg = self.reg_map[reg_index]
-                if reg[1] == 8:
-                    reg_data = int.from_bytes(struct.pack('<Q', reg_data), byteorder='big')
-                elif reg[1] == 4:
-                    reg_data = int.from_bytes(struct.pack('<I', reg_data), byteorder='big')
-                self.uc.reg_write(reg[0], reg_data)
-                self.send('OK')
+                try:
+                    reg_index, reg_data = subcmd.split('=')
+                    reg_index = int(reg_index, 16)
+                    reg_data = int.from_bytes(bytes.fromhex(reg_data), byteorder='little')
+                    reg = self.reg_map[reg_index]
+                    self.uc.reg_write(reg[0], reg_data)
+                    self.send('OK')
+                except:
+                    self.send('E01')
 
             def handle_q(subcmd):
                 if subcmd.startswith('Supported:'):
-                    self.send("PacketSize=8000;qXfer:features:read+")
+                    self.send("PacketSize=8000;qXfer:features:read+;multiprocess+")
                 elif subcmd.startswith('Xfer:features:read'):
                     self.send("l<target version=\"1.0\"><architecture>i386:x86-64</architecture></target>")
                 elif subcmd == "Attached":
                     self.send("")
                 elif subcmd.startswith("C"):
-                    self.send("")
+                    self.send("QCp7d0.7d0")
                 elif subcmd == "fThreadInfo":
-                    self.send("m0")
+                    self.send("mp7d0.7d0")
                 elif subcmd == "sThreadInfo":
                     self.send("l")
                 elif subcmd == "TStatus":
@@ -165,6 +162,54 @@ class UnicornGdbserver():
             def handle_v(subcmd):
                 if subcmd == 'MustReplyEmpty':
                     self.send("")
+
+                elif subcmd.startswith('File:open'):
+                    (file_path, flags, mode) = subcmd.split(':')[-1].split(',')
+                    file_path = unhexlify(file_path).decode(encoding='UTF-8')
+                    flags = int(flags, base=16)
+                    mode = int(mode, base=16)
+                    if file_path.startswith("/proc") and file_path.endswith("/maps"):
+                        def _perms_mapping(ps):
+                            perms_d = {1: "r", 2: "w", 4: "x"}
+                            perms_sym = []
+                            for idx, val in perms_d.items():
+                                if idx & ps != 0:
+                                    perms_sym.append(val)
+                                else:
+                                    perms_sym.append("-")
+                            return "".join(perms_sym)
+                        with open(self.maps_file, 'w') as f:
+                            for r in self.uc.mem_regions():
+                                f.write("%s-%s %s 0 0 0\n" % (hex(r[0]), hex(r[1]+1), _perms_mapping(r[2])))
+                        fd = os.open(self.maps_file, os.O_RDONLY)
+                        self.send("F%x" % fd)
+                    else:
+                        self.send("F-1")
+
+                elif subcmd.startswith('File:pread:'):
+                    (fd, count, offset) = subcmd.split(':')[-1].split(',')
+                    fd = int(fd, base=16)
+                    offset = int(offset, base=16)
+                    count = int(count, base=16)
+                    data = os.pread(fd, count, offset)
+                    size = len(data)
+                    data = self.bin_to_escstr(data)
+                    if data:
+                        self.send(("F%x;" % size).encode() + (data))
+                    else:
+                        self.send("F0;")
+
+                elif subcmd.startswith('File:close'):
+                    fd = subcmd.split(':')[-1]
+                    fd = int(fd, base=16)
+                    os.close(fd)
+                    self.send("F0")
+
+                elif subcmd.startswith('Kill'):
+                    self.send("OK")
+                    self.stop_state = False
+                    self.close()
+
                 else:
                     self.send("")
 
@@ -263,13 +308,9 @@ class UnicornGdbserver():
             raise
 
     def checksum(self, data):
-        checksum = 0
-        for c in data:
-            if type(c) == str:
-                checksum += (ord(c))
-            else:
-                checksum += c
-        return checksum & 0xff
+        if isinstance(data, str):
+            data = data.encode('latin-1')
+        return sum(data) & 0xff
 
     def send(self, msg):
         """Send a packet to the GDB client"""
