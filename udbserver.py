@@ -3,6 +3,7 @@ import socket
 import struct
 import tempfile
 from binascii import unhexlify
+from collections import defaultdict
 
 from unicorn import *
 from .reg_map import reg_map_x64
@@ -15,9 +16,11 @@ class UnicornGdbserver():
         self.last_pkt = None
         self.step_state = False
         self.stop_state = True
+        self.watch_address = None
         self.step_hook = None
-        self.bp_hooks = {}
         self.reg_map = reg_map_x64
+        self.bp_hooks = [defaultdict(dict) for i in range(6)]
+
         fd, self.maps_file = tempfile.mkstemp()
         os.close(fd)
 
@@ -46,16 +49,25 @@ class UnicornGdbserver():
         self.clientsocket.close()
         self.sock.close()
 
-    def hook_func(self, uc, address, size, data):
+    def bp_hook_func(self, uc, address, size, data):
         if self.step_state:
             self.step_state = False
+            return
+
+        if self.step_hook:
+            self.uc.hook_del(self.step_hook)
+            self.step_hook = None
+        if self.watch_address:
+            self.send("T05watch:%x;" % self.watch_address)
+            self.watch_address = None
         else:
-            if self.step_hook:
-                self.uc.hook_del(self.step_hook)
-                self.step_hook = None
-            self.stop_state = True
             self.send("S05")
-            self.main_loop()
+        self.stop_state = True
+        self.main_loop()
+
+    def mem_hook_func(self, uc, access, address, size, value, data):
+        self.watch_address = address
+        self.step_hook = self.uc.hook_add(UC_HOOK_CODE, self.bp_hook_func)
 
     def main_loop(self):
         while self.stop_state and self.receive() == 'Good':
@@ -88,9 +100,7 @@ class UnicornGdbserver():
                     self.send('OK')
 
             def handle_m(subcmd):
-                addr, size = subcmd.split(',')
-                addr = int(addr, 16)
-                size = int(size, 16)
+                addr, size = map(lambda x:int(x, 16), subcmd.split(','))
                 try:
                     mem = self.uc.mem_read(addr, size).hex()
                     self.send(mem)
@@ -157,7 +167,7 @@ class UnicornGdbserver():
             def handle_s(subcmd):
                 self.stop_state = False
                 self.step_state = True
-                self.step_hook = self.uc.hook_add(UC_HOOK_CODE, self.hook_func, None)
+                self.step_hook = self.uc.hook_add(UC_HOOK_CODE, self.bp_hook_func)
 
             def handle_v(subcmd):
                 if subcmd == 'MustReplyEmpty':
@@ -166,8 +176,8 @@ class UnicornGdbserver():
                 elif subcmd.startswith('File:open'):
                     (file_path, flags, mode) = subcmd.split(':')[-1].split(',')
                     file_path = unhexlify(file_path).decode(encoding='UTF-8')
-                    flags = int(flags, base=16)
-                    mode = int(mode, base=16)
+                    flags = int(flags, 16)
+                    mode = int(mode, 16)
                     if file_path.startswith("/proc") and file_path.endswith("/maps"):
                         def _perms_mapping(ps):
                             perms_d = {1: "r", 2: "w", 4: "x"}
@@ -187,10 +197,7 @@ class UnicornGdbserver():
                         self.send("F-1")
 
                 elif subcmd.startswith('File:pread:'):
-                    (fd, count, offset) = subcmd.split(':')[-1].split(',')
-                    fd = int(fd, base=16)
-                    offset = int(offset, base=16)
-                    count = int(count, base=16)
+                    fd, count, offset = map(lambda x:int(x, 16), subcmd.split(':')[-1].split(','))
                     data = os.pread(fd, count, offset)
                     size = len(data)
                     data = self.bin_to_escstr(data)
@@ -201,7 +208,7 @@ class UnicornGdbserver():
 
                 elif subcmd.startswith('File:close'):
                     fd = subcmd.split(':')[-1]
-                    fd = int(fd, base=16)
+                    fd = int(fd, 16)
                     os.close(fd)
                     self.send("F0")
 
@@ -217,34 +224,44 @@ class UnicornGdbserver():
                 self.send('')
 
             def handle_Z(subcmd):
-                data = subcmd
-                ztype = data[data.find('Z') + 1:data.find(',')]
-                if ztype == '0':
-                    ztype, address, value = data.split(',')
-                    address = int(address, 16)
-                    try:
-                        h = self.uc.hook_add(UC_HOOK_CODE, self.hook_func, None, address, address)
-                        self.bp_hooks[address] = h
-                        self.send('OK')
-                    except:
-                        self.send('E22')
-                else:
-                    self.send('E22')
-
-            def handle_z(subcmd):
-                data = subcmd.split(',')
-                if len(data) != 3:
-                    self.send('E22')
+                ztype, addr, size = map(lambda x:int(x, 16), subcmd.split(','))
                 try:
-                    type = data[0]
-                    addr = int(data[1], 16)
-                    length = data[2]
-                    if addr in self.bp_hooks:
-                        self.uc.hook_del(self.bp_hooks[addr])
-                        del(self.bp_hooks[addr])
+                    def add_write_hook(ztype, addr, size):
+                        h = self.uc.hook_add(UC_HOOK_MEM_WRITE, self.mem_hook_func, None, addr, addr+size)
+                        self.bp_hooks[ztype][size][addr] = h
+
+                    def add_read_hook(ztype, addr, size):
+                        h = self.uc.hook_add(UC_HOOK_MEM_READ, self.mem_hook_func, None, addr, addr+size)
+                        self.bp_hooks[ztype][size][addr] = h
+
+                    if ztype == 0 or ztype == 1:
+                        h = self.uc.hook_add(UC_HOOK_CODE, self.bp_hook_func, None, addr, addr)
+                        self.bp_hooks[ztype][size][addr] = h
+                        self.send('OK')
+                    elif ztype == 2:
+                        add_write_hook(ztype, addr, size)
+                        self.send('OK')
+                    elif ztype == 3:
+                        add_read_hook(ztype, addr, size)
+                        self.send('OK')
+                    elif ztype == 4:
+                        add_read_hook(ztype, addr, size)
+                        add_write_hook(ztype+1, addr, size)
                         self.send('OK')
                     else:
                         self.send('E22')
+                except:
+                    self.send('E22')
+
+            def handle_z(subcmd):
+                ztype, addr, size = map(lambda x:int(x, 16), subcmd.split(','))
+                try:
+                    self.uc.hook_del(self.bp_hooks[ztype][size][addr])
+                    del(self.bp_hooks[ztype][size][addr])
+                    if ztype == 4:
+                        self.uc.hook_del(self.bp_hooks[ztype+1][size][addr])
+                        del(self.bp_hooks[ztype+1][size][addr])
+                    self.send('OK')
                 except:
                     self.send('E22')
 
