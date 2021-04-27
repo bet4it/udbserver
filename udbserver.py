@@ -6,7 +6,7 @@ from binascii import unhexlify
 from collections import defaultdict
 
 from unicorn import *
-from .reg_map import reg_map_x64
+from .reg_map import *
 
 class UnicornGdbserver():
     def __init__(self, uc):
@@ -18,8 +18,23 @@ class UnicornGdbserver():
         self.stop_state = True
         self.watch_address = None
         self.step_hook = None
-        self.reg_map = reg_map_x64
         self.bp_hooks = [defaultdict(dict) for i in range(6)]
+
+        arch = uc.query(UC_QUERY_ARCH)
+        if arch == UC_ARCH_X86:
+            mode = uc.query(UC_QUERY_MODE)
+            if mode == UC_MODE_32:
+                self.reg_map = reg_map_x86
+                self.architecture = 'i386'
+            elif mode == UC_MODE_64:
+                self.reg_map = reg_map_x64
+                self.architecture = 'i386:x86-64'
+        elif arch == UC_ARCH_ARM:
+            self.reg_map = reg_map_arm
+            self.architecture = 'arm'
+        elif arch == UC_ARCH_ARM64:
+            self.reg_map = reg_map_arm64
+            self.architecture = 'aarch64'
 
         fd, self.maps_file = tempfile.mkstemp()
         os.close(fd)
@@ -121,9 +136,14 @@ class UnicornGdbserver():
             def handle_p(subcmd):
                 try:
                     reg_index = int(subcmd, 16)
-                    reg = self.reg_map[reg_index]
-                    reg_value = self.uc.reg_read(reg[0])
-                    reg_value = self.addr_to_str(reg_value, reg[1])
+                    if self.architecture == 'arm' and reg_index == 25:
+                        reg_value = self.addr_to_str(self.uc.reg_read(UC_ARM_REG_CPSR), 4)
+                    elif self.architecture =='aarch64' and reg_index in [33, 66, 67]:
+                        reg_value = '00000000'
+                    else:
+                        reg = self.reg_map[reg_index]
+                        reg_value = self.uc.reg_read(reg[0])
+                        reg_value = self.addr_to_str(reg_value, reg[1])
                     self.send(reg_value)
                 except:
                     self.send('E01')
@@ -133,7 +153,10 @@ class UnicornGdbserver():
                     reg_index, reg_data = subcmd.split('=')
                     reg_index = int(reg_index, 16)
                     reg_data = int.from_bytes(bytes.fromhex(reg_data), byteorder='little')
-                    reg = self.reg_map[reg_index]
+                    if self.architecture == 'arm' and reg_index == 25:
+                        reg = [UC_ARM_REG_CPSR, 4]
+                    else:
+                        reg = self.reg_map[reg_index]
                     self.uc.reg_write(reg[0], reg_data)
                     self.send('OK')
                 except:
@@ -143,7 +166,7 @@ class UnicornGdbserver():
                 if subcmd.startswith('Supported:'):
                     self.send("PacketSize=8000;qXfer:features:read+;multiprocess+")
                 elif subcmd.startswith('Xfer:features:read'):
-                    self.send("l<target version=\"1.0\"><architecture>i386:x86-64</architecture></target>")
+                    self.send(f"l<target version=\"1.0\"><architecture>{self.architecture}</architecture></target>")
                 elif subcmd == "Attached":
                     self.send("")
                 elif subcmd.startswith("C"):
