@@ -1,0 +1,10 @@
+[package]
+name = "udbserver"
+version = "0.1.0"
+authors = ["Bet4 <0xbet4@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+gdbstub = { git = "https://github.com/daniel5151/gdbstub", branch = "dev/0.5" }
+gdbstub_arch = { git = "https://github.com/daniel5151/gdbstub", branch = "dev/0.5" }
+unicorn = { path = "../unicorn/bindings/rust", version="1.0.0" }
