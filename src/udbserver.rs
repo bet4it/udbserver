@@ -6,8 +6,6 @@ use unicorn::RegisterARM;
 
 pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-mod emu;
-
 fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     let sockaddr = format!("127.0.0.1:{}", port);
     eprintln!("Waiting for a GDB connection on {:?}...", sockaddr);
@@ -19,7 +17,7 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     Ok(stream)
 }
 
-fn main() -> DynResult<()> {
+pub fn udbserver() -> DynResult<()> {
     let arm_code32: Vec<u8> = vec![0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
     let mut unicorn = unicorn::Unicorn::new(Arch::ARM, Mode::LITTLE_ENDIAN, 0).expect("Failed to initialize Unicorn instance");
     let mut uc = unicorn.borrow();
@@ -27,7 +25,7 @@ fn main() -> DynResult<()> {
     uc.mem_write(0x1000, &arm_code32).expect("Failed to write instructions");
     uc.reg_write(RegisterARM::PC as i32, 0x1000).expect("Failed write PC");
 
-    let mut emu = emu::Emu::new(uc)?;
+    let mut emu = crate::emu::Emu::new(uc)?;
 
     let connection: Box<dyn Connection<Error = std::io::Error>> = { Box::new(wait_for_tcp(9001)?) };
 
