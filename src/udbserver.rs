@@ -1,8 +1,6 @@
 use std::net::{TcpListener, TcpStream};
 
 use gdbstub::{Connection, DisconnectReason, GdbStub};
-use unicorn::unicorn_const::{Arch, Mode, Permission};
-use unicorn::RegisterARM;
 
 pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -17,13 +15,8 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     Ok(stream)
 }
 
-pub fn udbserver() -> DynResult<()> {
-    let arm_code32: Vec<u8> = vec![0x17, 0x00, 0x40, 0xe2]; // sub r0, #23
-    let mut unicorn = unicorn::Unicorn::new(Arch::ARM, Mode::LITTLE_ENDIAN, 0).expect("Failed to initialize Unicorn instance");
-    let mut uc = unicorn.borrow();
-    uc.mem_map(0x1000, 0x4000, Permission::ALL).expect("Failed to map code page");
-    uc.mem_write(0x1000, &arm_code32).expect("Failed to write instructions");
-    uc.reg_write(RegisterARM::PC as i32, 0x1000).expect("Failed write PC");
+pub fn udbserver(mut unicorn: unicorn::Unicorn) -> DynResult<()> {
+    let uc = unicorn.borrow();
 
     let mut emu = crate::emu::Emu::new(uc)?;
 

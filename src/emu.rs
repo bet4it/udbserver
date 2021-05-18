@@ -39,11 +39,11 @@ impl Target for Emu<'_> {
 }
 
 pub struct Emu<'a> {
-    uc: unicorn::UnicornHandle<'a, i32>,
+    uc: unicorn::UnicornHandle<'a>,
 }
 
 impl Emu<'_> {
-    pub fn new(uc: unicorn::UnicornHandle<i32>) -> DynResult<Emu> {
+    pub fn new(uc: unicorn::UnicornHandle) -> DynResult<Emu> {
         Ok(Emu { uc: uc })
     }
 

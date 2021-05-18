@@ -10,7 +10,7 @@ ensure-%:
 	cp deps/* bindings/$*
 
 c: ensure-c
-	cd bindings/c && gcc -ludbserver example.c -o example && ./example
+	cd bindings/c && gcc -lunicorn -ludbserver example.c -o example && ./example
 
 python: ensure-python
 	swig -python -outdir bindings/python bindings/python/udbserver.i
