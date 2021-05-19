@@ -3,13 +3,5 @@ Cargo.lock
 
 *.so
 *.o
-*.c
-*.h
 
-!bindings/c/example.c
-
-bulid
-*.pyc
 example
-udbserver.py
-udbserver.go

@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
-	"unsafe"
 	uc "github.com/unicorn-engine/unicorn/bindings/go/unicorn"
-	udbserver "sample.com/udbserver/go"
+	udbserver "sample.com/udbserver/go/udbserver"
 )
 
 func run() error {
@@ -23,7 +22,7 @@ func run() error {
 	if err := mu.RegWrite(uc.ARM_REG_PC, 0x1000); err != nil {
 		return err
 	}
-	udbserver.Udbserver(uintptr(unsafe.Pointer(mu.Handle())))
+	udbserver.Udbserver(mu)
 	return nil
 }
 

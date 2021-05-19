@@ -11,6 +11,3 @@ crate-type = ["cdylib"]
 gdbstub = { git = "https://github.com/daniel5151/gdbstub", branch = "dev/0.5" }
 gdbstub_arch = { git = "https://github.com/daniel5151/gdbstub", branch = "dev/0.5" }
 unicorn = { path = "../unicorn/bindings/rust", version="1.0.0" }
-
-[build-dependencies]
-cbindgen = "0.19"

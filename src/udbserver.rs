@@ -29,7 +29,10 @@ pub fn udbserver(mut unicorn: unicorn::Unicorn) -> DynResult<()> {
             println!("Disconnect!");
             return Ok(());
         }
-        DisconnectReason::TargetHalted => println!("Target halted!"),
+        DisconnectReason::TargetExited(code) => println!("Target exited with code {}!", code),
+        DisconnectReason::TargetTerminated(sig) => {
+            println!("Target terminated with signal {}!", sig)
+        }
         DisconnectReason::Kill => {
             println!("GDB sent a kill command!");
             return Ok(());
