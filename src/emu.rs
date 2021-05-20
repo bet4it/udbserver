@@ -1,4 +1,4 @@
-use crate::udbserver::DynResult;
+use crate::DynResult;
 
 use gdbstub::target;
 use gdbstub::target::ext::base::singlethread::GdbInterrupt;

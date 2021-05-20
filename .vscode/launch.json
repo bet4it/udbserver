@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug tests in 'udbserver'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=server",
+                ],
+                "filter": {
+                    "name": "server",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
