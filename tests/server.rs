@@ -10,5 +10,6 @@ fn run_server() {
     uc.mem_map(0x1000, 0x4000, Permission::ALL).expect("Failed to map code page");
     uc.mem_write(0x1000, &arm_code32).expect("Failed to write instructions");
     uc.reg_write(RegisterARM::PC as i32, 0x1000).expect("Failed write PC");
-    udbserver::udbserver(unicorn).expect("Failed to run udbserver");
+    uc.add_code_hook(0x1000, 0x1000, udbserver::udbserver_hook).expect("Failed to add hook");
+    uc.emu_start(0x1000, 0x2000, 0, 1000).expect("Failed to start emu");
 }

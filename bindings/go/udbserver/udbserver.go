@@ -2,6 +2,7 @@ package unicorn
 
 import (
 	"unsafe"
+
 	uc "github.com/unicorn-engine/unicorn/bindings/go/unicorn"
 )
 
@@ -16,4 +17,8 @@ import "C"
 func Udbserver(mu uc.Unicorn) error {
 	C.udbserver(unsafe.Pointer(mu.Handle()))
 	return nil
+}
+
+func UdbserverHook(mu uc.Unicorn, address uint64, size uint32) {
+	Udbserver(mu)
 }

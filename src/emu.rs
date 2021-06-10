@@ -1,11 +1,14 @@
 use crate::DynResult;
 
+use crate::uc_hook;
 use gdbstub::target;
 use gdbstub::target::ext::base::singlethread::GdbInterrupt;
 use gdbstub::target::ext::base::singlethread::{ResumeAction, SingleThreadOps, StopReason};
 use gdbstub::target::{Target, TargetError, TargetResult};
-use unicorn::unicorn_const::{uc_error, SECOND_SCALE};
+use std::ptr::null_mut;
+use unicorn::unicorn_const::uc_error;
 use unicorn::RegisterARM;
+use unicorn::UnicornHandle;
 
 pub static REG_MAP_ARM: [RegisterARM; 13] = [
     RegisterARM::R0,
@@ -23,9 +26,38 @@ pub static REG_MAP_ARM: [RegisterARM; 13] = [
     RegisterARM::R12,
 ];
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Event {
-    Break,
+pub struct Global {
+    step_state: bool,
+    step_hook: uc_hook,
+}
+
+static mut G: Global = Global {
+    step_state: false,
+    step_hook: null_mut(),
+};
+
+pub fn step_hook(mut uc: UnicornHandle, _address: u64, _size: u32) {
+    unsafe {
+        if G.step_state {
+            G.step_state = false;
+            return;
+        }
+        if G.step_hook != null_mut() {
+            uc.remove_hook(G.step_hook).expect("Failed to remove hook");
+            G.step_hook = null_mut();
+        }
+    }
+    crate::udbserver(uc).expect("Failed to start udbserver");
+}
+
+pub struct Emu<'a> {
+    uc: UnicornHandle<'a>,
+}
+
+impl Emu<'_> {
+    pub fn new(uc: UnicornHandle) -> DynResult<Emu> {
+        Ok(Emu { uc: uc })
+    }
 }
 
 impl Target for Emu<'_> {
@@ -38,36 +70,18 @@ impl Target for Emu<'_> {
     }
 }
 
-pub struct Emu<'a> {
-    uc: unicorn::UnicornHandle<'a>,
-}
-
-impl Emu<'_> {
-    pub fn new(uc: unicorn::UnicornHandle) -> DynResult<Emu> {
-        Ok(Emu { uc: uc })
-    }
-
-    pub fn step(&mut self) -> Option<Event> {
-        let pc = self.uc.reg_read(RegisterARM::PC as i32).expect("Failed to read PC when step");
-        self.uc.emu_start(pc, 0x2000, 10 * SECOND_SCALE, 1).expect("Failed in emu_start");
-        return Some(Event::Break);
-    }
-}
-
 impl SingleThreadOps for Emu<'_> {
     fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<StopReason<u32>, Self::Error> {
         match action {
-            ResumeAction::Step => match self.step() {
-                Some(e) => e,
-                None => return Ok(StopReason::DoneStep),
-            },
-            ResumeAction::Continue => match self.step() {
-                Some(e) => e,
-                None => return Ok(StopReason::DoneStep),
-            },
-            _ => return Err("cannot resume with signal"),
-        };
-        Ok(StopReason::DoneStep)
+            ResumeAction::Step => {
+                unsafe {
+                    G.step_state = true;
+                    G.step_hook = self.uc.add_code_hook(1, 0, step_hook).expect("failed to add code hook");
+                }
+                Err("udbserver")
+            }
+            _ => Err("cannot resume with signal"),
+        }
     }
 
     fn read_registers(&mut self, regs: &mut gdbstub_arch::arm::reg::ArmCoreRegs) -> TargetResult<(), Self> {
