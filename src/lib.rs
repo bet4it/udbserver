@@ -2,7 +2,7 @@ mod capi;
 mod emu;
 
 use capi::uc_hook;
-use gdbstub::{DisconnectReason, GdbStub, GdbStubError};
+use gdbstub::{Connection, DisconnectReason, GdbStub};
 use once_cell::sync::OnceCell;
 use std::net::{TcpListener, TcpStream};
 use unicorn::UnicornHandle;
@@ -20,13 +20,21 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     Ok(stream)
 }
 
-pub fn udbserver(uc: UnicornHandle) -> DynResult<()> {
+fn send_msg(mut conn: TcpStream, msg: String) -> DynResult<()> {
+    let checksum: u8 = msg.as_bytes().iter().sum();
+    let s = format!("${}#{:x}", msg, checksum);
+    conn.write_all(s.as_bytes())?;
+    Ok(())
+}
+
+pub fn udbserver_conn(uc: UnicornHandle, msg: Option<String>) -> DynResult<()> {
     let mut emu = crate::emu::Emu::new(uc)?;
     static CONNECTION: OnceCell<TcpStream> = OnceCell::new();
-    let conn = CONNECTION.get_or_init(|| match wait_for_tcp(9001) {
-        Ok(n) => n,
-        Err(_) => panic!("tcp listen failed"),
-    });
+    let conn = CONNECTION.get_or_init(|| wait_for_tcp(9001).expect("tcp listen failed"));
+
+    if let Some(s) = msg {
+        send_msg(conn.try_clone().expect("try_clone failed"), s).expect("send_msg failed")
+    }
 
     let mut debugger = GdbStub::new(conn.try_clone().expect("try_clone failed"));
 
@@ -43,7 +51,7 @@ pub fn udbserver(uc: UnicornHandle) -> DynResult<()> {
             println!("GDB sent a kill command!");
             return Ok(());
         }
-        Err(GdbStubError::TargetError("udbserver")) => {
+        Ok(DisconnectReason::Custom) => {
             return Ok(());
         }
         Err(_) => {
@@ -52,6 +60,10 @@ pub fn udbserver(uc: UnicornHandle) -> DynResult<()> {
     }
 
     Ok(())
+}
+
+pub fn udbserver(uc: UnicornHandle) -> DynResult<()> {
+    udbserver_conn(uc, None)
 }
 
 pub fn udbserver_hook(uc: UnicornHandle<'_>, _address: u64, _size: u32) {
