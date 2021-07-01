@@ -1,12 +1,11 @@
 use crate::DynResult;
 
-use crate::uc_hook;
+use crate::capi::uc_hook;
 use gdbstub::target;
 use gdbstub::target::ext::base::singlethread::{GdbInterrupt, ResumeAction, SingleThreadOps, StopReason};
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{Target, TargetError, TargetResult};
 use std::collections::HashMap;
-use std::ptr::null_mut;
 use unicorn::unicorn_const::uc_error;
 use unicorn::unicorn_const::{HookType, MemType};
 use unicorn::RegisterARM;
@@ -28,10 +27,50 @@ pub static REG_MAP_ARM: [RegisterARM; 13] = [
     RegisterARM::R12,
 ];
 
-pub struct Global {
+struct EmuState {
     step_state: bool,
-    step_hook: uc_hook,
+    step_hook: Option<uc_hook>,
     watch_addr: Option<u64>,
+}
+
+static mut G: EmuState = EmuState {
+    step_state: false,
+    step_hook: None,
+    watch_addr: None,
+};
+
+fn step_hook(mut uc: UnicornHandle, _addr: u64, _size: u32) {
+    let mut addr = None;
+    unsafe {
+        if G.step_state {
+            G.step_state = false;
+            return;
+        }
+        if let Some(step_hook) = G.step_hook {
+            uc.remove_hook(step_hook).expect("Failed to remove step hook");
+            G.step_hook = None;
+        }
+        if let Some(watch_addr) = G.watch_addr {
+            addr = Some(watch_addr);
+            G.watch_addr = None
+        }
+    }
+    crate::udbserver_resume(addr).expect("Failed to resume udbserver");
+}
+
+fn mem_hook(mut uc: UnicornHandle, _mem_type: MemType, addr: u64, _size: usize, _value: i64) {
+    unsafe {
+        if G.watch_addr == None {
+            G.watch_addr = Some(addr);
+            if G.step_hook.is_none() {
+                G.step_hook = Some(uc.add_code_hook(1, 0, step_hook).expect("Failed to add code hook"));
+            }
+        }
+    }
+}
+
+pub struct Emu {
+    uc: UnicornHandle<'static>,
     bp_sw_hooks: HashMap<u64, uc_hook>,
     bp_hw_hooks: HashMap<u64, uc_hook>,
     wp_r_hooks: HashMap<u32, HashMap<u64, uc_hook>>,
@@ -39,71 +78,20 @@ pub struct Global {
     wp_rw_hooks: HashMap<u32, HashMap<u64, uc_hook>>,
 }
 
-static mut G: Option<Global> = None;
-
-pub fn step_hook(mut uc: UnicornHandle, _addr: u64, _size: u32) {
-    let global;
-    let msg: String;
-    unsafe {
-        global = G.as_mut().unwrap();
-    }
-    if global.step_state {
-        global.step_state = false;
-        return;
-    }
-    if global.step_hook != null_mut() {
-        uc.remove_hook(global.step_hook).expect("Failed to remove hook");
-        global.step_hook = null_mut();
-    }
-    if let Some(watch_addr) = global.watch_addr {
-        msg = format!("T05watch:{:x};", watch_addr);
-        global.watch_addr = None
-    } else {
-        msg = "S05".to_string();
-    }
-    crate::udbserver_conn(uc, Some(msg)).expect("Failed to start udbserver");
-}
-
-pub fn mem_hook(mut uc: UnicornHandle, _mem_type: MemType, addr: u64, _size: usize, _value: i64) {
-    let global;
-    unsafe {
-        global = G.as_mut().unwrap();
-    }
-    if global.watch_addr == None {
-        global.watch_addr = Some(addr);
-        global.step_hook = uc.add_code_hook(1, 0, step_hook).expect("failed to add code hook");
+impl Emu {
+    pub fn new(uc: UnicornHandle<'static>) -> DynResult<Emu> {
+        Ok(Emu {
+            uc: uc,
+            bp_sw_hooks: HashMap::new(),
+            bp_hw_hooks: HashMap::new(),
+            wp_r_hooks: HashMap::new(),
+            wp_w_hooks: HashMap::new(),
+            wp_rw_hooks: HashMap::new(),
+        })
     }
 }
 
-pub struct Emu<'a> {
-    uc: UnicornHandle<'a>,
-    v: &'static mut Global,
-}
-
-impl Emu<'_> {
-    pub fn new(uc: UnicornHandle) -> DynResult<Emu> {
-        unsafe {
-            if G.is_none() {
-                G = Some(Global {
-                    step_state: false,
-                    step_hook: null_mut(),
-                    watch_addr: None,
-                    bp_sw_hooks: HashMap::new(),
-                    bp_hw_hooks: HashMap::new(),
-                    wp_r_hooks: HashMap::new(),
-                    wp_w_hooks: HashMap::new(),
-                    wp_rw_hooks: HashMap::new(),
-                });
-            }
-            Ok(Emu {
-                uc: uc,
-                v: G.as_mut().unwrap(),
-            })
-        }
-    }
-}
-
-impl Target for Emu<'_> {
+impl Target for Emu {
     type Arch = gdbstub_arch::arm::Armv4t;
     type Error = &'static str;
 
@@ -118,16 +106,18 @@ impl Target for Emu<'_> {
     }
 }
 
-impl SingleThreadOps for Emu<'_> {
-    fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<StopReason<u32>, Self::Error> {
+impl SingleThreadOps for Emu {
+    fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<Option<StopReason<u32>>, Self::Error> {
         match action {
             ResumeAction::Step => {
-                self.v.step_state = true;
-                self.v.step_hook = self.uc.add_code_hook(1, 0, step_hook).expect("failed to add code hook");
-                Ok(StopReason::Custom)
+                unsafe {
+                    G.step_state = true;
+                    G.step_hook = Some(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
+                }
+                Ok(None)
             }
-            ResumeAction::Continue => Ok(StopReason::Custom),
-            _ => Err("cannot resume with signal"),
+            ResumeAction::Continue => Ok(None),
+            _ => Err("Cannot resume with signal"),
         }
     }
 
@@ -168,7 +158,7 @@ impl SingleThreadOps for Emu<'_> {
     }
 }
 
-impl target::ext::breakpoints::Breakpoints for Emu<'_> {
+impl target::ext::breakpoints::Breakpoints for Emu {
     #[inline(always)]
     fn sw_breakpoint(&mut self) -> Option<target::ext::breakpoints::SwBreakpointOps<Self>> {
         Some(self)
@@ -191,7 +181,7 @@ macro_rules! add_breakpoint {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
-        $self.v.$hook_map.insert($addr.into(), hook);
+        $self.$hook_map.insert($addr.into(), hook);
         Ok(true)
     }};
     ( $self:ident, $mem_type:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
@@ -199,14 +189,14 @@ macro_rules! add_breakpoint {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
-        $self.v.$hook_map.entry($len).or_insert(HashMap::new()).insert($addr.into(), hook);
+        $self.$hook_map.entry($len).or_insert(HashMap::new()).insert($addr.into(), hook);
         Ok(true)
     }};
 }
 
 macro_rules! remove_breakpoint {
     ( $self:ident, $addr:ident, $hook_map:ident ) => {{
-        let hook = match $self.v.$hook_map.remove(&$addr.into()) {
+        let hook = match $self.$hook_map.remove(&$addr.into()) {
             Some(h) => h,
             None => return Ok(false),
         };
@@ -216,7 +206,7 @@ macro_rules! remove_breakpoint {
         }
     }};
     ( $self:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
-        let map = match $self.v.$hook_map.get_mut(&$len) {
+        let map = match $self.$hook_map.get_mut(&$len) {
             Some(h) => h,
             None => return Ok(false),
         };
@@ -231,7 +221,7 @@ macro_rules! remove_breakpoint {
     }};
 }
 
-impl target::ext::breakpoints::SwBreakpoint for Emu<'_> {
+impl target::ext::breakpoints::SwBreakpoint for Emu {
     fn add_sw_breakpoint(&mut self, addr: u32, _kind: gdbstub_arch::arm::ArmBreakpointKind) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_sw_hooks)
     }
@@ -241,7 +231,7 @@ impl target::ext::breakpoints::SwBreakpoint for Emu<'_> {
     }
 }
 
-impl target::ext::breakpoints::HwBreakpoint for Emu<'_> {
+impl target::ext::breakpoints::HwBreakpoint for Emu {
     fn add_hw_breakpoint(&mut self, addr: u32, _kind: gdbstub_arch::arm::ArmBreakpointKind) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_hw_hooks)
     }
@@ -251,7 +241,7 @@ impl target::ext::breakpoints::HwBreakpoint for Emu<'_> {
     }
 }
 
-impl target::ext::breakpoints::HwWatchpoint for Emu<'_> {
+impl target::ext::breakpoints::HwWatchpoint for Emu {
     fn add_hw_watchpoint(&mut self, addr: u32, len: u32, kind: WatchKind) -> TargetResult<bool, Self> {
         match kind {
             WatchKind::Read => add_breakpoint!(self, MEM_READ, addr, len, wp_r_hooks),

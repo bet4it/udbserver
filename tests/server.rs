@@ -1,6 +1,6 @@
-use unicorn::Unicorn;
 use unicorn::unicorn_const::{Arch, Mode, Permission};
 use unicorn::RegisterARM;
+use unicorn::Unicorn;
 
 #[test]
 fn run_server() {
