@@ -4,16 +4,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug tests in 'udbserver'",
+            "name": "Debug example 'server'",
             "cargo": {
                 "args": [
-                    "test",
-                    "--no-run",
-                    "--test=server",
+                    "build",
+                    "--example=server",
+                    "--package=udbserver"
                 ],
                 "filter": {
                     "name": "server",
-                    "kind": "test"
+                    "kind": "example"
                 }
             },
             "args": [],

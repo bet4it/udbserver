@@ -8,7 +8,7 @@ import (
 )
 
 func run() error {
-	code := []byte("\x17\x00\x40\xe2") // sub r0, #23
+	code := []byte("\x0f\x00\xa0\xe1\x14\x00\x80\xe2\x00\x10\x90\xe5\x14\x10\x81\xe2\x00\x10\x80\xe5\xfb\xff\xff\xea")
 
 	mu, err := uc.NewUnicorn(uc.ARCH_ARM, uc.MODE_ARM)
 	if err != nil {
@@ -24,10 +24,11 @@ func run() error {
 		return err
 	}
 
-	mu.HookAdd(uc.HOOK_CODE, func(mu uc.Unicorn, addr uint64, size uint32) {}, 1, 0)
+	mu.HookAdd(uc.HOOK_CODE, func(_mu uc.Unicorn, _addr uint64, _size uint32) {}, 1, 0)
+	mu.HookAdd(uc.HOOK_MEM_READ, func(_mu uc.Unicorn, _type int, _addr uint64, _size int, _value int64) {}, 1, 0)
 	mu.HookAdd(uc.HOOK_CODE, udbserver.UdbserverHook, 0x1000, 0x1000)
 
-	if err := mu.Start(0x1000, 0x2000); err != nil {
+	if err := mu.StartWithOptions(0x1000, 0x2000, &uc.UcOptions{0, 1000}); err != nil {
 		return err
 	}
 
