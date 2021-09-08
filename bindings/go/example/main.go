@@ -24,9 +24,7 @@ func run() error {
 		return err
 	}
 
-	mu.HookAdd(uc.HOOK_CODE, func(_mu uc.Unicorn, _addr uint64, _size uint32) {}, 1, 0)
-	mu.HookAdd(uc.HOOK_MEM_READ, func(_mu uc.Unicorn, _type int, _addr uint64, _size int, _value int64) {}, 1, 0)
-	mu.HookAdd(uc.HOOK_CODE, udbserver.UdbserverHook, 0x1000, 0x1000)
+	udbserver.Udbserver(mu, 1234, 0x1000)
 
 	if err := mu.StartWithOptions(0x1000, 0x2000, &uc.UcOptions{0, 1000}); err != nil {
 		return err

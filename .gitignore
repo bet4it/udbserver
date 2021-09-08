@@ -4,4 +4,4 @@ Cargo.lock
 *.so
 *.o
 
-example
+bindings/c/example

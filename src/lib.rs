@@ -6,6 +6,7 @@ use gdbstub::target::ext::base::singlethread::StopReason;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::{ConnectionExt, DisconnectReason, GdbStub};
 use std::net::{TcpListener, TcpStream};
+use unicorn::unicorn_const::{HookType, MemType};
 use unicorn::UnicornHandle;
 
 pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -24,16 +25,33 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     Ok(stream)
 }
 
-pub fn udbserver_hook(uc: UnicornHandle, _address: u64, _size: u32) {
-    udbserver(uc).expect("Failed to start udbserver");
+pub fn udbserver(mut uc: UnicornHandle, port: u16, start_addr: u64) -> DynResult<()> {
+    uc.add_code_hook(1, 0, |_uc: UnicornHandle, _addr: u64, _size: u32| {})
+        .expect("Failed to add empty code hook");
+    uc.add_mem_hook(
+        HookType::MEM_READ,
+        1,
+        0,
+        |_uc: UnicornHandle, _mem_type: MemType, _addr: u64, _size: usize, _value: i64| {},
+    )
+    .expect("Failed to add empty mem hook");
+    if start_addr != 0 {
+        uc.add_code_hook(start_addr, start_addr, move |uc: UnicornHandle, _addr: u64, _size: u32| {
+            udbserver_entry(uc, port).expect("Failed to start udbserver")
+        })
+        .expect("Failed to add udbserver hook");
+        Ok(())
+    } else {
+        udbserver_entry(uc, port)
+    }
 }
 
-pub fn udbserver(uc: UnicornHandle) -> DynResult<()> {
+fn udbserver_entry(uc: UnicornHandle, port: u16) -> DynResult<()> {
     unsafe {
         if !GDBSTUB.is_none() {
             return Ok(());
         }
-        GDBSTUB = Some(GdbStub::new(wait_for_tcp(9001)?).run_state_machine()?);
+        GDBSTUB = Some(GdbStub::new(wait_for_tcp(port)?).run_state_machine()?);
         EMU = Some(emu::Emu::new(std::mem::transmute::<UnicornHandle<'_>, UnicornHandle<'static>>(uc))?)
     }
     udbserver_loop()

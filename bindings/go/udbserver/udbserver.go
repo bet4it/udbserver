@@ -14,11 +14,7 @@ import (
 */
 import "C"
 
-func Udbserver(mu uc.Unicorn) error {
-	C.udbserver(unsafe.Pointer(mu.Handle()))
+func Udbserver(mu uc.Unicorn, port uint16, start_addr uint64) error {
+	C.udbserver(unsafe.Pointer(mu.Handle()), C.ushort(port), C.ulong(start_addr))
 	return nil
-}
-
-func UdbserverHook(mu uc.Unicorn, address uint64, size uint32) {
-	Udbserver(mu)
 }
