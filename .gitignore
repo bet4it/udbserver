@@ -3,5 +3,8 @@ Cargo.lock
 
 *.so
 *.o
+*.class
+*.jar
 
 bindings/c/example
+bindings/java/udbserver_Udbserver.h
