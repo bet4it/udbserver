@@ -8,6 +8,6 @@ edition = "2018"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-gdbstub = { git = "https://github.com/daniel5151/gdbstub", branch = "dev/0.6" }
-gdbstub_arch = { git = "https://github.com/daniel5151/gdbstub", branch = "dev/0.6" }
-unicorn = { git = "https://github.com/bet4it/unicorn", version="1.0.0" }
+gdbstub = { git = "https://github.com/bet4it/gdbstub", branch = "dyn_regid" }
+unicorn = { git = "https://github.com/bet4it/unicorn" }
+phf = { version = "0.10", features = ["macros"] }

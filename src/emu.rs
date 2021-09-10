@@ -1,31 +1,17 @@
+use crate::arch;
+use crate::capi::uc_hook;
+use crate::reg::RegMap;
 use crate::DynResult;
 
-use crate::capi::uc_hook;
 use gdbstub::target;
 use gdbstub::target::ext::base::singlethread::{GdbInterrupt, ResumeAction, SingleThreadOps, StopReason};
+use gdbstub::target::ext::base::SendRegisterOutput;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{Target, TargetError, TargetResult};
 use std::collections::HashMap;
 use unicorn::unicorn_const::uc_error;
-use unicorn::unicorn_const::{HookType, MemType};
-use unicorn::RegisterARM;
+use unicorn::unicorn_const::{HookType, MemType, Mode, Query};
 use unicorn::UnicornHandle;
-
-pub static REG_MAP_ARM: [RegisterARM; 13] = [
-    RegisterARM::R0,
-    RegisterARM::R1,
-    RegisterARM::R2,
-    RegisterARM::R3,
-    RegisterARM::R4,
-    RegisterARM::R5,
-    RegisterARM::R6,
-    RegisterARM::R7,
-    RegisterARM::R8,
-    RegisterARM::R9,
-    RegisterARM::R10,
-    RegisterARM::R11,
-    RegisterARM::R12,
-];
 
 struct EmuState {
     step_state: bool,
@@ -71,17 +57,23 @@ fn mem_hook(mut uc: UnicornHandle, _mem_type: MemType, addr: u64, _size: usize, 
 
 pub struct Emu {
     uc: UnicornHandle<'static>,
+    reg_map: &'static RegMap,
     bp_sw_hooks: HashMap<u64, uc_hook>,
     bp_hw_hooks: HashMap<u64, uc_hook>,
-    wp_r_hooks: HashMap<u32, HashMap<u64, uc_hook>>,
-    wp_w_hooks: HashMap<u32, HashMap<u64, uc_hook>>,
-    wp_rw_hooks: HashMap<u32, HashMap<u64, uc_hook>>,
+    wp_r_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
+    wp_w_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
+    wp_rw_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
 }
 
 impl Emu {
     pub fn new(uc: UnicornHandle<'static>) -> DynResult<Emu> {
+        let arch = uc.get_arch();
+        let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
+        let mode = Mode::from_bits(query_mode as i32).unwrap();
+        let reg_map = RegMap::new(arch, mode);
         Ok(Emu {
             uc: uc,
+            reg_map: reg_map,
             bp_sw_hooks: HashMap::new(),
             bp_hw_hooks: HashMap::new(),
             wp_r_hooks: HashMap::new(),
@@ -92,7 +84,7 @@ impl Emu {
 }
 
 impl Target for Emu {
-    type Arch = gdbstub_arch::arm::Armv4t;
+    type Arch = arch::GenericArch;
     type Error = &'static str;
 
     #[inline(always)]
@@ -104,10 +96,15 @@ impl Target for Emu {
     fn breakpoints(&mut self) -> Option<target::ext::breakpoints::BreakpointsOps<Self>> {
         Some(self)
     }
+
+    #[inline(always)]
+    fn target_description_xml_override(&mut self) -> Option<target::ext::target_description_xml_override::TargetDescriptionXmlOverrideOps<Self>> {
+        Some(self)
+    }
 }
 
 impl SingleThreadOps for Emu {
-    fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<Option<StopReason<u32>>, Self::Error> {
+    fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<Option<StopReason<u64>>, Self::Error> {
         match action {
             ResumeAction::Step => {
                 unsafe {
@@ -121,27 +118,37 @@ impl SingleThreadOps for Emu {
         }
     }
 
-    fn read_registers(&mut self, regs: &mut gdbstub_arch::arm::reg::ArmCoreRegs) -> TargetResult<(), Self> {
-        for (idx, reg) in REG_MAP_ARM.iter().enumerate() {
-            regs.r[idx] = self.uc.reg_read(*reg as i32).expect("Failed to read register") as u32;
+    fn read_registers(&mut self, regs: &mut arch::GenericRegs) -> TargetResult<(), Self> {
+        regs.buf = Vec::new();
+        for reg in self.reg_map.reg_list() {
+            let val = match reg.0 {
+                Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
+                None => 0,
+            };
+            regs.buf.extend(self.reg_map.to_bytes(val, reg.1));
         }
-        regs.sp = self.uc.reg_read(RegisterARM::SP as i32).expect("Failed to read register") as u32;
-        regs.lr = self.uc.reg_read(RegisterARM::LR as i32).expect("Failed to read register") as u32;
-        regs.pc = self.uc.reg_read(RegisterARM::PC as i32).expect("Failed to read register") as u32;
         Ok(())
     }
 
-    fn write_registers(&mut self, regs: &gdbstub_arch::arm::reg::ArmCoreRegs) -> TargetResult<(), Self> {
-        for (idx, reg) in REG_MAP_ARM.iter().enumerate() {
-            self.uc.reg_write(*reg as i32, regs.r[idx] as u64).expect("Failed to write register");
+    fn write_registers(&mut self, regs: &arch::GenericRegs) -> TargetResult<(), Self> {
+        let mut i = 0;
+        for reg in self.reg_map.reg_list() {
+            let part = &regs.buf[i..i + reg.1];
+            let val = self.reg_map.from_bytes(part);
+            i += reg.1;
+            if let Some(regid) = reg.0 {
+                self.uc.reg_write(regid, val).map_err(|_| ())?
+            }
         }
-        self.uc.reg_write(RegisterARM::SP as i32, regs.sp as u64).expect("Failed to write register");
-        self.uc.reg_write(RegisterARM::LR as i32, regs.lr as u64).expect("Failed to write register");
-        self.uc.reg_write(RegisterARM::PC as i32, regs.pc as u64).expect("Failed to write register");
         Ok(())
     }
 
-    fn read_addrs(&mut self, start_addr: u32, data: &mut [u8]) -> TargetResult<(), Self> {
+    #[inline(always)]
+    fn single_register_access(&mut self) -> Option<target::ext::base::SingleRegisterAccessOps<(), Self>> {
+        Some(self)
+    }
+
+    fn read_addrs(&mut self, start_addr: u64, data: &mut [u8]) -> TargetResult<(), Self> {
         match self.uc.mem_read(start_addr as u64, data) {
             Ok(_) => Ok(()),
             Err(uc_error::READ_UNMAPPED) => Err(TargetError::Errno(1)),
@@ -149,7 +156,7 @@ impl SingleThreadOps for Emu {
         }
     }
 
-    fn write_addrs(&mut self, start_addr: u32, data: &[u8]) -> TargetResult<(), Self> {
+    fn write_addrs(&mut self, start_addr: u64, data: &[u8]) -> TargetResult<(), Self> {
         match self.uc.mem_write(start_addr as u64, data) {
             Ok(_) => Ok(()),
             Err(uc_error::WRITE_UNMAPPED) => Err(TargetError::Errno(1)),
@@ -222,27 +229,27 @@ macro_rules! remove_breakpoint {
 }
 
 impl target::ext::breakpoints::SwBreakpoint for Emu {
-    fn add_sw_breakpoint(&mut self, addr: u32, _kind: gdbstub_arch::arm::ArmBreakpointKind) -> TargetResult<bool, Self> {
+    fn add_sw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_sw_hooks)
     }
 
-    fn remove_sw_breakpoint(&mut self, addr: u32, _kind: gdbstub_arch::arm::ArmBreakpointKind) -> TargetResult<bool, Self> {
+    fn remove_sw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         remove_breakpoint!(self, addr, bp_sw_hooks)
     }
 }
 
 impl target::ext::breakpoints::HwBreakpoint for Emu {
-    fn add_hw_breakpoint(&mut self, addr: u32, _kind: gdbstub_arch::arm::ArmBreakpointKind) -> TargetResult<bool, Self> {
+    fn add_hw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_hw_hooks)
     }
 
-    fn remove_hw_breakpoint(&mut self, addr: u32, _kind: gdbstub_arch::arm::ArmBreakpointKind) -> TargetResult<bool, Self> {
+    fn remove_hw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         remove_breakpoint!(self, addr, bp_hw_hooks)
     }
 }
 
 impl target::ext::breakpoints::HwWatchpoint for Emu {
-    fn add_hw_watchpoint(&mut self, addr: u32, len: u32, kind: WatchKind) -> TargetResult<bool, Self> {
+    fn add_hw_watchpoint(&mut self, addr: u64, len: u64, kind: WatchKind) -> TargetResult<bool, Self> {
         match kind {
             WatchKind::Read => add_breakpoint!(self, MEM_READ, addr, len, wp_r_hooks),
             WatchKind::Write => add_breakpoint!(self, MEM_WRITE, addr, len, wp_w_hooks),
@@ -250,11 +257,39 @@ impl target::ext::breakpoints::HwWatchpoint for Emu {
         }
     }
 
-    fn remove_hw_watchpoint(&mut self, addr: u32, len: u32, kind: WatchKind) -> TargetResult<bool, Self> {
+    fn remove_hw_watchpoint(&mut self, addr: u64, len: u64, kind: WatchKind) -> TargetResult<bool, Self> {
         match kind {
             WatchKind::Read => remove_breakpoint!(self, addr, len, wp_r_hooks),
             WatchKind::Write => remove_breakpoint!(self, addr, len, wp_w_hooks),
             WatchKind::ReadWrite => remove_breakpoint!(self, addr, len, wp_rw_hooks),
         }
+    }
+}
+
+impl target::ext::base::SingleRegisterAccess<()> for Emu {
+    fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, mut output: SendRegisterOutput<'_>) -> TargetResult<(), Self> {
+        let reg = self.reg_map.get_reg(reg_id.0)?;
+        let val = match reg.0 {
+            Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
+            None => 0,
+        };
+        output.write(&self.reg_map.to_bytes(val, reg.1));
+        Ok(())
+    }
+
+    fn write_register(&mut self, _tid: (), reg_id: arch::GenericRegId, val: &[u8]) -> TargetResult<(), Self> {
+        let reg = self.reg_map.get_reg(reg_id.0)?;
+        assert!(reg.1 == val.len(), "Length mismatch when write register {}", reg.0.unwrap());
+        if let Some(regid) = reg.0 {
+            let v = self.reg_map.from_bytes(val);
+            self.uc.reg_write(regid, v).map_err(|_| ())?;
+        }
+        Ok(())
+    }
+}
+
+impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu {
+    fn target_description_xml(&self) -> &str {
+        self.reg_map.description_xml()
     }
 }

@@ -1,5 +1,7 @@
+mod arch;
 mod capi;
 mod emu;
+mod reg;
 
 use gdbstub::state_machine::GdbStubStateMachine;
 use gdbstub::target::ext::base::singlethread::StopReason;
@@ -63,7 +65,7 @@ fn udbserver_resume(addr: Option<u64>) -> DynResult<()> {
     let reason = if let Some(watch_addr) = addr {
         StopReason::Watch {
             kind: WatchKind::Write,
-            addr: watch_addr as u32,
+            addr: watch_addr,
         }
     } else {
         StopReason::DoneStep
