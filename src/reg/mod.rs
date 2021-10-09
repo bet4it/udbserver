@@ -1,5 +1,4 @@
 use core::convert::TryInto;
-use phf::OrderedMap;
 use unicorn::unicorn_const::{Arch, Mode};
 
 mod arm;
@@ -9,7 +8,7 @@ mod x64;
 mod x86;
 
 pub struct RegMap {
-    regs: OrderedMap<u64, (Option<i32>, usize)>,
+    regs: &'static [(Option<i32>, usize)],
     len: usize,
     desc: &'static str,
 }
@@ -32,11 +31,11 @@ impl RegMap {
     }
 
     pub fn reg_list(&self) -> impl Iterator<Item = (Option<i32>, usize)> + '_ {
-        self.regs.values().take(self.len).copied()
+        self.regs.iter().take(self.len).copied()
     }
 
-    pub fn get_reg(&self, id: u64) -> Result<(Option<i32>, usize), ()> {
-        match self.regs.get(&id) {
+    pub fn get_reg(&self, id: usize) -> Result<(Option<i32>, usize), ()> {
+        match self.regs.get(id) {
             Some(reg) => Ok(*reg),
             None => Err(()),
         }

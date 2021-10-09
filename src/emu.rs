@@ -269,11 +269,17 @@ impl target::ext::breakpoints::HwWatchpoint for Emu {
 impl target::ext::base::SingleRegisterAccess<()> for Emu {
     fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, mut output: SendRegisterOutput<'_>) -> TargetResult<(), Self> {
         let reg = self.reg_map.get_reg(reg_id.0)?;
-        let val = match reg.0 {
-            Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
-            None => 0,
-        };
-        output.write(&self.reg_map.to_bytes(val, reg.1));
+        if reg.1 <= 8 {
+            let val = match reg.0 {
+                Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
+                None => 0,
+            };
+            output.write(&self.reg_map.to_bytes(val, reg.1));
+        } else {
+            if let Some(regid) = reg.0 {
+                output.write(&self.uc.reg_read_long(regid).map_err(|_| ())?);
+            }
+        }
         Ok(())
     }
 
@@ -281,8 +287,12 @@ impl target::ext::base::SingleRegisterAccess<()> for Emu {
         let reg = self.reg_map.get_reg(reg_id.0)?;
         assert!(reg.1 == val.len(), "Length mismatch when write register {}", reg.0.unwrap());
         if let Some(regid) = reg.0 {
-            let v = self.reg_map.from_bytes(val);
-            self.uc.reg_write(regid, v).map_err(|_| ())?;
+            if reg.1 <= 8 {
+                let v = self.reg_map.from_bytes(val);
+                self.uc.reg_write(regid, v).map_err(|_| ())?;
+            } else {
+                self.uc.reg_write_long(regid, val.into()).map_err(|_| ())?;
+            }
         }
         Ok(())
     }

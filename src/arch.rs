@@ -3,11 +3,11 @@ use gdbstub::arch::{Arch, RegId, Registers};
 
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
-pub struct GenericRegId(pub u64);
+pub struct GenericRegId(pub usize);
 
 impl RegId for GenericRegId {
     fn from_raw_id(id: usize) -> Option<(Self, Option<NonZeroUsize>)> {
-        Some((GenericRegId(id as u64), None))
+        Some((GenericRegId(id), None))
     }
 }
 

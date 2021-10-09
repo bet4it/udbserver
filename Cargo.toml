@@ -10,4 +10,3 @@ crate-type = ["lib", "cdylib"]
 [dependencies]
 gdbstub = { git = "https://github.com/bet4it/gdbstub", branch = "dyn_regid" }
 unicorn = { git = "https://github.com/bet4it/unicorn" }
-phf = { version = "0.10", features = ["macros"] }
