@@ -4,7 +4,7 @@ rust:
 	cargo build --release
 
 c:
-	cd bindings/c && gcc -lunicorn -ludbserver -I../../include -L../../target/release example.c -o example && LD_LIBRARY_PATH=../../target/release ./example
+	cd bindings/c && gcc -I../../include -L../../target/release example.c -lunicorn -ludbserver -o example && LD_LIBRARY_PATH=../../target/release ./example
 
 java:
 	cd bindings/java && make all && LD_LIBRARY_PATH=.:../../target/release make example

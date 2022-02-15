@@ -9,4 +9,4 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 gdbstub = { git = "https://github.com/bet4it/gdbstub", branch = "dyn_regid" }
-unicorn = { git = "https://github.com/bet4it/unicorn" }
+unicorn-engine = { git = "https://github.com/unicorn-engine/unicorn", branch = "dev", features = ["use_system_unicorn"] }

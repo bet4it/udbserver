@@ -8,8 +8,8 @@ use gdbstub::target::ext::base::singlethread::StopReason;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::{ConnectionExt, DisconnectReason, GdbStub};
 use std::net::{TcpListener, TcpStream};
-use unicorn::unicorn_const::{HookType, MemType};
-use unicorn::UnicornHandle;
+use unicorn_engine::unicorn_const::{HookType, MemType};
+use unicorn_engine::Unicorn;
 
 pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -27,18 +27,18 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     Ok(stream)
 }
 
-pub fn udbserver(mut uc: UnicornHandle, port: u16, start_addr: u64) -> DynResult<()> {
-    uc.add_code_hook(1, 0, |_uc: UnicornHandle, _addr: u64, _size: u32| {})
+pub fn udbserver(uc: &mut Unicorn<()>, port: u16, start_addr: u64) -> DynResult<()> {
+    uc.add_code_hook(1, 0, |_uc: &mut Unicorn<'_, ()>, _addr: u64, _size: u32| {})
         .expect("Failed to add empty code hook");
     uc.add_mem_hook(
         HookType::MEM_READ,
         1,
         0,
-        |_uc: UnicornHandle, _mem_type: MemType, _addr: u64, _size: usize, _value: i64| {},
+        |_uc: &mut Unicorn<'_, ()>, _mem_type: MemType, _addr: u64, _size: usize, _value: i64| true,
     )
     .expect("Failed to add empty mem hook");
     if start_addr != 0 {
-        uc.add_code_hook(start_addr, start_addr, move |uc: UnicornHandle, _addr: u64, _size: u32| {
+        uc.add_code_hook(start_addr, start_addr, move |uc: &mut Unicorn<'_, ()>, _addr: u64, _size: u32| {
             udbserver_entry(uc, port).expect("Failed to start udbserver")
         })
         .expect("Failed to add udbserver hook");
@@ -48,13 +48,13 @@ pub fn udbserver(mut uc: UnicornHandle, port: u16, start_addr: u64) -> DynResult
     }
 }
 
-fn udbserver_entry(uc: UnicornHandle, port: u16) -> DynResult<()> {
+fn udbserver_entry(uc: &mut Unicorn<()>, port: u16) -> DynResult<()> {
     unsafe {
         if !GDBSTUB.is_none() {
             return Ok(());
         }
         GDBSTUB = Some(GdbStub::new(wait_for_tcp(port)?).run_state_machine()?);
-        EMU = Some(emu::Emu::new(std::mem::transmute::<UnicornHandle<'_>, UnicornHandle<'static>>(uc))?)
+        EMU = Some(emu::Emu::new(std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc))?)
     }
     udbserver_loop()
 }

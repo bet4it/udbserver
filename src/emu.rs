@@ -9,9 +9,8 @@ use gdbstub::target::ext::base::SendRegisterOutput;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{Target, TargetError, TargetResult};
 use std::collections::HashMap;
-use unicorn::unicorn_const::uc_error;
-use unicorn::unicorn_const::{HookType, MemType, Mode, Query};
-use unicorn::UnicornHandle;
+use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
+use unicorn_engine::Unicorn;
 
 struct EmuState {
     step_state: bool,
@@ -25,7 +24,7 @@ static mut G: EmuState = EmuState {
     watch_addr: None,
 };
 
-fn step_hook(mut uc: UnicornHandle, _addr: u64, _size: u32) {
+fn step_hook(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
     let mut addr = None;
     unsafe {
         if G.step_state {
@@ -44,7 +43,7 @@ fn step_hook(mut uc: UnicornHandle, _addr: u64, _size: u32) {
     crate::udbserver_resume(addr).expect("Failed to resume udbserver");
 }
 
-fn mem_hook(mut uc: UnicornHandle, _mem_type: MemType, addr: u64, _size: usize, _value: i64) {
+fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
     unsafe {
         if G.watch_addr == None {
             G.watch_addr = Some(addr);
@@ -53,10 +52,11 @@ fn mem_hook(mut uc: UnicornHandle, _mem_type: MemType, addr: u64, _size: usize, 
             }
         }
     }
+    true
 }
 
-pub struct Emu {
-    uc: UnicornHandle<'static>,
+pub struct Emu<'a> {
+    uc: &'a mut Unicorn<'static, ()>,
     reg_map: &'static RegMap,
     bp_sw_hooks: HashMap<u64, uc_hook>,
     bp_hw_hooks: HashMap<u64, uc_hook>,
@@ -65,8 +65,8 @@ pub struct Emu {
     wp_rw_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
 }
 
-impl Emu {
-    pub fn new(uc: UnicornHandle<'static>) -> DynResult<Emu> {
+impl<'a> Emu<'a> {
+    pub fn new(uc: &'a mut Unicorn<'static, ()>) -> DynResult<Emu<'a>> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
         let mode = Mode::from_bits(query_mode as i32).unwrap();
@@ -83,7 +83,7 @@ impl Emu {
     }
 }
 
-impl Target for Emu {
+impl Target for Emu<'_> {
     type Arch = arch::GenericArch;
     type Error = &'static str;
 
@@ -103,7 +103,7 @@ impl Target for Emu {
     }
 }
 
-impl SingleThreadOps for Emu {
+impl SingleThreadOps for Emu<'_> {
     fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<Option<StopReason<u64>>, Self::Error> {
         match action {
             ResumeAction::Step => {
@@ -165,7 +165,7 @@ impl SingleThreadOps for Emu {
     }
 }
 
-impl target::ext::breakpoints::Breakpoints for Emu {
+impl target::ext::breakpoints::Breakpoints for Emu<'_> {
     #[inline(always)]
     fn sw_breakpoint(&mut self) -> Option<target::ext::breakpoints::SwBreakpointOps<Self>> {
         Some(self)
@@ -228,7 +228,7 @@ macro_rules! remove_breakpoint {
     }};
 }
 
-impl target::ext::breakpoints::SwBreakpoint for Emu {
+impl target::ext::breakpoints::SwBreakpoint for Emu<'_> {
     fn add_sw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_sw_hooks)
     }
@@ -238,7 +238,7 @@ impl target::ext::breakpoints::SwBreakpoint for Emu {
     }
 }
 
-impl target::ext::breakpoints::HwBreakpoint for Emu {
+impl target::ext::breakpoints::HwBreakpoint for Emu<'_> {
     fn add_hw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_hw_hooks)
     }
@@ -248,7 +248,7 @@ impl target::ext::breakpoints::HwBreakpoint for Emu {
     }
 }
 
-impl target::ext::breakpoints::HwWatchpoint for Emu {
+impl target::ext::breakpoints::HwWatchpoint for Emu<'_> {
     fn add_hw_watchpoint(&mut self, addr: u64, len: u64, kind: WatchKind) -> TargetResult<bool, Self> {
         match kind {
             WatchKind::Read => add_breakpoint!(self, MEM_READ, addr, len, wp_r_hooks),
@@ -266,7 +266,7 @@ impl target::ext::breakpoints::HwWatchpoint for Emu {
     }
 }
 
-impl target::ext::base::SingleRegisterAccess<()> for Emu {
+impl target::ext::base::SingleRegisterAccess<()> for Emu<'_> {
     fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, mut output: SendRegisterOutput<'_>) -> TargetResult<(), Self> {
         let reg = self.reg_map.get_reg(reg_id.0)?;
         if reg.1 <= 8 {
@@ -298,7 +298,7 @@ impl target::ext::base::SingleRegisterAccess<()> for Emu {
     }
 }
 
-impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu {
+impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu<'_> {
     fn target_description_xml(&self) -> &str {
         self.reg_map.description_xml()
     }
