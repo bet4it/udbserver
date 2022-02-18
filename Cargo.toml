@@ -8,5 +8,5 @@ edition = "2018"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-gdbstub = { git = "https://github.com/bet4it/gdbstub", branch = "dyn_regid" }
+gdbstub = "0.6"
 unicorn-engine = { git = "https://github.com/unicorn-engine/unicorn", branch = "dev", features = ["use_system_unicorn"] }

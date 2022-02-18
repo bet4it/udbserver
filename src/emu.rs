@@ -3,12 +3,12 @@ use crate::capi::uc_hook;
 use crate::reg::RegMap;
 use crate::DynResult;
 
+use gdbstub::common::Signal;
 use gdbstub::target;
-use gdbstub::target::ext::base::singlethread::{GdbInterrupt, ResumeAction, SingleThreadOps, StopReason};
-use gdbstub::target::ext::base::SendRegisterOutput;
 use gdbstub::target::ext::breakpoints::WatchKind;
-use gdbstub::target::{Target, TargetError, TargetResult};
+use gdbstub::target::{TargetError, TargetResult};
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
 use unicorn_engine::Unicorn;
 
@@ -23,6 +23,23 @@ static mut G: EmuState = EmuState {
     step_hook: None,
     watch_addr: None,
 };
+
+fn copy_to_buf(data: &[u8], buf: &mut [u8]) -> usize {
+    let len = data.len();
+    let buf = &mut buf[..len];
+    buf.copy_from_slice(data);
+    len
+}
+
+fn copy_range_to_buf(data: &[u8], offset: u64, length: usize, buf: &mut [u8]) -> usize {
+    let offset = match usize::try_from(offset) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let len = data.len();
+    let data = &data[len.min(offset)..len.min(offset + length)];
+    copy_to_buf(data, buf)
+}
 
 fn step_hook(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
     let mut addr = None;
@@ -72,8 +89,8 @@ impl<'a> Emu<'a> {
         let mode = Mode::from_bits(query_mode as i32).unwrap();
         let reg_map = RegMap::new(arch, mode);
         Ok(Emu {
-            uc: uc,
-            reg_map: reg_map,
+            uc,
+            reg_map,
             bp_sw_hooks: HashMap::new(),
             bp_hw_hooks: HashMap::new(),
             wp_r_hooks: HashMap::new(),
@@ -83,7 +100,7 @@ impl<'a> Emu<'a> {
     }
 }
 
-impl Target for Emu<'_> {
+impl target::Target for Emu<'_> {
     type Arch = arch::GenericArch;
     type Error = &'static str;
 
@@ -93,31 +110,17 @@ impl Target for Emu<'_> {
     }
 
     #[inline(always)]
-    fn breakpoints(&mut self) -> Option<target::ext::breakpoints::BreakpointsOps<Self>> {
+    fn support_breakpoints(&mut self) -> Option<target::ext::breakpoints::BreakpointsOps<Self>> {
         Some(self)
     }
 
     #[inline(always)]
-    fn target_description_xml_override(&mut self) -> Option<target::ext::target_description_xml_override::TargetDescriptionXmlOverrideOps<Self>> {
+    fn support_target_description_xml_override(&mut self) -> Option<target::ext::target_description_xml_override::TargetDescriptionXmlOverrideOps<Self>> {
         Some(self)
     }
 }
 
-impl SingleThreadOps for Emu<'_> {
-    fn resume(&mut self, action: ResumeAction, _gdb_interrupt: GdbInterrupt<'_>) -> Result<Option<StopReason<u64>>, Self::Error> {
-        match action {
-            ResumeAction::Step => {
-                unsafe {
-                    G.step_state = true;
-                    G.step_hook = Some(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
-                }
-                Ok(None)
-            }
-            ResumeAction::Continue => Ok(None),
-            _ => Err("Cannot resume with signal"),
-        }
-    }
-
+impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
     fn read_registers(&mut self, regs: &mut arch::GenericRegs) -> TargetResult<(), Self> {
         regs.buf = Vec::new();
         for reg in self.reg_map.reg_list() {
@@ -144,7 +147,7 @@ impl SingleThreadOps for Emu<'_> {
     }
 
     #[inline(always)]
-    fn single_register_access(&mut self) -> Option<target::ext::base::SingleRegisterAccessOps<(), Self>> {
+    fn support_single_register_access(&mut self) -> Option<target::ext::base::single_register_access::SingleRegisterAccessOps<(), Self>> {
         Some(self)
     }
 
@@ -163,21 +166,52 @@ impl SingleThreadOps for Emu<'_> {
             Err(_) => Err(TargetError::Fatal("Failed to write addr")),
         }
     }
+
+    #[inline(always)]
+    fn support_resume(&mut self) -> Option<target::ext::base::singlethread::SingleThreadResumeOps<Self>> {
+        Some(self)
+    }
+}
+
+impl target::ext::base::singlethread::SingleThreadResume for Emu<'_> {
+    fn resume(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn support_single_step(&mut self) -> Option<target::ext::base::singlethread::SingleThreadSingleStepOps<Self>> {
+        Some(self)
+    }
+}
+
+impl target::ext::base::singlethread::SingleThreadSingleStep for Emu<'_> {
+    fn step(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
+        if signal.is_some() {
+            return Err("no support for stepping with signal");
+        }
+
+        unsafe {
+            G.step_state = true;
+            G.step_hook = Some(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
+        }
+
+        Ok(())
+    }
 }
 
 impl target::ext::breakpoints::Breakpoints for Emu<'_> {
     #[inline(always)]
-    fn sw_breakpoint(&mut self) -> Option<target::ext::breakpoints::SwBreakpointOps<Self>> {
+    fn support_sw_breakpoint(&mut self) -> Option<target::ext::breakpoints::SwBreakpointOps<Self>> {
         Some(self)
     }
 
     #[inline(always)]
-    fn hw_breakpoint(&mut self) -> Option<target::ext::breakpoints::HwBreakpointOps<Self>> {
+    fn support_hw_breakpoint(&mut self) -> Option<target::ext::breakpoints::HwBreakpointOps<Self>> {
         Some(self)
     }
 
     #[inline(always)]
-    fn hw_watchpoint(&mut self) -> Option<target::ext::breakpoints::HwWatchpointOps<Self>> {
+    fn support_hw_watchpoint(&mut self) -> Option<target::ext::breakpoints::HwWatchpointOps<Self>> {
         Some(self)
     }
 }
@@ -266,21 +300,21 @@ impl target::ext::breakpoints::HwWatchpoint for Emu<'_> {
     }
 }
 
-impl target::ext::base::SingleRegisterAccess<()> for Emu<'_> {
-    fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, mut output: SendRegisterOutput<'_>) -> TargetResult<(), Self> {
+impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu<'_> {
+    fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, buf: &mut [u8]) -> TargetResult<usize, Self> {
         let reg = self.reg_map.get_reg(reg_id.0)?;
         if reg.1 <= 8 {
             let val = match reg.0 {
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            output.write(&self.reg_map.to_bytes(val, reg.1));
+            Ok(copy_to_buf(&self.reg_map.to_bytes(val, reg.1), buf))
+        } else if let Some(regid) = reg.0 {
+            let data = &self.uc.reg_read_long(regid).map_err(|_| ())?;
+            Ok(copy_to_buf(data, buf))
         } else {
-            if let Some(regid) = reg.0 {
-                output.write(&self.uc.reg_read_long(regid).map_err(|_| ())?);
-            }
+            Ok(0)
         }
-        Ok(())
     }
 
     fn write_register(&mut self, _tid: (), reg_id: arch::GenericRegId, val: &[u8]) -> TargetResult<(), Self> {
@@ -291,7 +325,7 @@ impl target::ext::base::SingleRegisterAccess<()> for Emu<'_> {
                 let v = self.reg_map.from_bytes(val);
                 self.uc.reg_write(regid, v).map_err(|_| ())?;
             } else {
-                self.uc.reg_write_long(regid, val.into()).map_err(|_| ())?;
+                self.uc.reg_write_long(regid, val).map_err(|_| ())?;
             }
         }
         Ok(())
@@ -299,7 +333,8 @@ impl target::ext::base::SingleRegisterAccess<()> for Emu<'_> {
 }
 
 impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu<'_> {
-    fn target_description_xml(&self) -> &str {
-        self.reg_map.description_xml()
+    fn target_description_xml(&self, _annex: &[u8], offset: u64, length: usize, buf: &mut [u8]) -> TargetResult<usize, Self> {
+        let xml = self.reg_map.description_xml().as_bytes();
+        Ok(copy_range_to_buf(xml, offset, length, buf))
     }
 }

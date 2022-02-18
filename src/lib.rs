@@ -3,10 +3,10 @@ mod capi;
 mod emu;
 mod reg;
 
-use gdbstub::state_machine::GdbStubStateMachine;
-use gdbstub::target::ext::base::singlethread::StopReason;
+use gdbstub::conn::ConnectionExt;
+use gdbstub::stub::state_machine::GdbStubStateMachine;
+use gdbstub::stub::{DisconnectReason, GdbStubBuilder, SingleThreadStopReason};
 use gdbstub::target::ext::breakpoints::WatchKind;
-use gdbstub::{ConnectionExt, DisconnectReason, GdbStub};
 use std::net::{TcpListener, TcpStream};
 use unicorn_engine::unicorn_const::{HookType, MemType};
 use unicorn_engine::Unicorn;
@@ -50,11 +50,12 @@ pub fn udbserver(uc: &mut Unicorn<()>, port: u16, start_addr: u64) -> DynResult<
 
 fn udbserver_entry(uc: &mut Unicorn<()>, port: u16) -> DynResult<()> {
     unsafe {
-        if !GDBSTUB.is_none() {
+        if GDBSTUB.is_some() {
             return Ok(());
         }
-        GDBSTUB = Some(GdbStub::new(wait_for_tcp(port)?).run_state_machine()?);
-        EMU = Some(emu::Emu::new(std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc))?)
+        let mut emu = emu::Emu::new(std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc))?;
+        GDBSTUB = Some(GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(&mut emu)?);
+        EMU = Some(emu)
     }
     udbserver_loop()
 }
@@ -63,17 +64,18 @@ fn udbserver_resume(addr: Option<u64>) -> DynResult<()> {
     let emu = unsafe { EMU.as_mut().unwrap() };
     let mut gdb = unsafe { GDBSTUB.take().unwrap() };
     let reason = if let Some(watch_addr) = addr {
-        StopReason::Watch {
+        SingleThreadStopReason::Watch {
+            tid: (),
             kind: WatchKind::Write,
             addr: watch_addr,
         }
     } else {
-        StopReason::DoneStep
+        SingleThreadStopReason::DoneStep
     };
-    if let GdbStubStateMachine::DeferredStopReason(gdb_inner) = gdb {
-        match gdb_inner.deferred_stop_reason(emu, reason.into())? {
-            (_, Some(disconnect_reason)) => return handle_disconnect(disconnect_reason),
-            (gdb_state, None) => gdb = gdb_state,
+    if let GdbStubStateMachine::Running(gdb_inner) = gdb {
+        match gdb_inner.report_stop(emu, reason) {
+            Ok(gdb_state) => gdb = gdb_state,
+            Err(_) => return Ok(()),
         }
     }
     unsafe { GDBSTUB = Some(gdb) }
@@ -85,20 +87,17 @@ fn udbserver_loop() -> DynResult<()> {
     let mut gdb = unsafe { GDBSTUB.take().unwrap() };
     loop {
         gdb = match gdb {
-            GdbStubStateMachine::Pump(mut gdb) => {
+            GdbStubStateMachine::Idle(mut gdb) => {
                 let byte = gdb.borrow_conn().read()?;
-                let (gdb, disconnect_reason) = gdb.pump(emu, byte)?;
-                match disconnect_reason {
-                    Some(reason) => return handle_disconnect(reason),
-                    None => gdb,
-                }
+                gdb.incoming_data(emu, byte)?
             }
-            GdbStubStateMachine::DeferredStopReason(_) => {
-                unsafe { GDBSTUB = Some(gdb) }
-                return Ok(());
-            }
+            GdbStubStateMachine::Running(_) => break,
+            GdbStubStateMachine::CtrlCInterrupt(_) => break,
+            GdbStubStateMachine::Disconnected(gdb) => return handle_disconnect(gdb.get_reason()),
         }
     }
+    unsafe { GDBSTUB = Some(gdb) };
+    Ok(())
 }
 
 fn handle_disconnect(reason: DisconnectReason) -> DynResult<()> {

@@ -1,5 +1,5 @@
 use core::num::NonZeroUsize;
-use gdbstub::arch::{Arch, RegId, Registers};
+use gdbstub::arch::{Arch, RegId, Registers, SingleStepGdbBehavior};
 
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
@@ -42,4 +42,9 @@ impl Arch for GenericArch {
     type Registers = GenericRegs;
     type RegId = GenericRegId;
     type BreakpointKind = usize;
+
+    #[inline(always)]
+    fn single_step_gdb_behavior() -> SingleStepGdbBehavior {
+        SingleStepGdbBehavior::Optional
+    }
 }
