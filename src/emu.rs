@@ -1,6 +1,6 @@
 use crate::arch;
 use crate::capi::uc_hook;
-use crate::reg::RegMap;
+use crate::reg::Register;
 use crate::DynResult;
 
 use gdbstub::common::Signal;
@@ -74,7 +74,7 @@ fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _
 
 pub struct Emu<'a> {
     uc: &'a mut Unicorn<'static, ()>,
-    reg_map: &'static RegMap,
+    reg: Register,
     bp_sw_hooks: HashMap<u64, uc_hook>,
     bp_hw_hooks: HashMap<u64, uc_hook>,
     wp_r_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
@@ -87,10 +87,10 @@ impl<'a> Emu<'a> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
         let mode = Mode::from_bits(query_mode as i32).unwrap();
-        let reg_map = RegMap::new(arch, mode);
+        let reg = Register::new(arch, mode);
         Ok(Emu {
             uc,
-            reg_map,
+            reg,
             bp_sw_hooks: HashMap::new(),
             bp_hw_hooks: HashMap::new(),
             wp_r_hooks: HashMap::new(),
@@ -123,21 +123,21 @@ impl target::Target for Emu<'_> {
 impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
     fn read_registers(&mut self, regs: &mut arch::GenericRegs) -> TargetResult<(), Self> {
         regs.buf = Vec::new();
-        for reg in self.reg_map.reg_list() {
+        for reg in self.reg.list() {
             let val = match reg.0 {
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            regs.buf.extend(self.reg_map.to_bytes(val, reg.1));
+            regs.buf.extend(self.reg.to_bytes(val, reg.1));
         }
         Ok(())
     }
 
     fn write_registers(&mut self, regs: &arch::GenericRegs) -> TargetResult<(), Self> {
         let mut i = 0;
-        for reg in self.reg_map.reg_list() {
+        for reg in self.reg.list() {
             let part = &regs.buf[i..i + reg.1];
-            let val = self.reg_map.from_bytes(part);
+            let val = self.reg.from_bytes(part);
             i += reg.1;
             if let Some(regid) = reg.0 {
                 self.uc.reg_write(regid, val).map_err(|_| ())?
@@ -302,13 +302,13 @@ impl target::ext::breakpoints::HwWatchpoint for Emu<'_> {
 
 impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu<'_> {
     fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, buf: &mut [u8]) -> TargetResult<usize, Self> {
-        let reg = self.reg_map.get_reg(reg_id.0)?;
+        let reg = self.reg.get(reg_id.0)?;
         if reg.1 <= 8 {
             let val = match reg.0 {
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            Ok(copy_to_buf(&self.reg_map.to_bytes(val, reg.1), buf))
+            Ok(copy_to_buf(&self.reg.to_bytes(val, reg.1), buf))
         } else if let Some(regid) = reg.0 {
             let data = &self.uc.reg_read_long(regid).map_err(|_| ())?;
             Ok(copy_to_buf(data, buf))
@@ -318,11 +318,11 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
     }
 
     fn write_register(&mut self, _tid: (), reg_id: arch::GenericRegId, val: &[u8]) -> TargetResult<(), Self> {
-        let reg = self.reg_map.get_reg(reg_id.0)?;
+        let reg = self.reg.get(reg_id.0)?;
         assert!(reg.1 == val.len(), "Length mismatch when write register {}", reg.0.unwrap());
         if let Some(regid) = reg.0 {
             if reg.1 <= 8 {
-                let v = self.reg_map.from_bytes(val);
+                let v = self.reg.from_bytes(val);
                 self.uc.reg_write(regid, v).map_err(|_| ())?;
             } else {
                 self.uc.reg_write_long(regid, val).map_err(|_| ())?;
@@ -334,7 +334,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
 
 impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu<'_> {
     fn target_description_xml(&self, _annex: &[u8], offset: u64, length: usize, buf: &mut [u8]) -> TargetResult<usize, Self> {
-        let xml = self.reg_map.description_xml().as_bytes();
+        let xml = self.reg.description_xml().as_bytes();
         Ok(copy_range_to_buf(xml, offset, length, buf))
     }
 }
