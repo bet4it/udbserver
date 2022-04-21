@@ -1,4 +1,7 @@
 /target
+/build
+dist
+udbserver.egg-info
 Cargo.lock
 
 *.so

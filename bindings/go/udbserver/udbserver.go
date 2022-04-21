@@ -7,10 +7,9 @@ import (
 )
 
 /*
-#cgo CFLAGS: -O3 -Wall -Werror -I../../../include
-#cgo LDFLAGS: -L../../../target/release -ludbserver
-#cgo linux LDFLAGS: -L../../../target/release -ludbserver -lrt
-#include "udbserver.h"
+#cgo CFLAGS: -O3 -Wall -Werror
+#cgo LDFLAGS: -ludbserver
+#include <udbserver.h>
 */
 import "C"
 

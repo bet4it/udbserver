@@ -2,11 +2,24 @@
 name = "udbserver"
 version = "0.1.0"
 authors = ["Bet4 <0xbet4@gmail.com>"]
-edition = "2018"
+description = "Provide Unicorn emulator with a debug server"
+license = "MIT"
+edition = "2021"
+readme = "README.md"
+repository = "http://github.com/bet4it/udbserver"
+categories = ["emulators"]
+keywords = ["gdb", "debugging", "emulator"]
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
+
+[features]
+capi = []
 
 [dependencies]
 gdbstub = "0.6"
-unicorn-engine = { git = "https://github.com/unicorn-engine/unicorn", branch = "dev", features = ["use_system_unicorn"] }
+unicorn-engine = { version = "2.0.0-rc7", features = ["use_system_unicorn"] }
+
+[package.metadata.capi.header]
+subdirectory = false
+generation = false

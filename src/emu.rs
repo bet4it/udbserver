@@ -1,5 +1,4 @@
 use crate::arch;
-use crate::capi::uc_hook;
 use crate::reg::Register;
 use crate::DynResult;
 
@@ -9,12 +8,15 @@ use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{TargetError, TargetResult};
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::ffi::c_void;
 use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
 use unicorn_engine::Unicorn;
 
+type Hook = *mut c_void;
+
 struct EmuState {
     step_state: bool,
-    step_hook: Option<uc_hook>,
+    step_hook: Option<Hook>,
     watch_addr: Option<u64>,
 }
 
@@ -75,11 +77,11 @@ fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _
 pub struct Emu<'a> {
     uc: &'a mut Unicorn<'static, ()>,
     reg: Register,
-    bp_sw_hooks: HashMap<u64, uc_hook>,
-    bp_hw_hooks: HashMap<u64, uc_hook>,
-    wp_r_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
-    wp_w_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
-    wp_rw_hooks: HashMap<u64, HashMap<u64, uc_hook>>,
+    bp_sw_hooks: HashMap<u64, Hook>,
+    bp_hw_hooks: HashMap<u64, Hook>,
+    wp_r_hooks: HashMap<u64, HashMap<u64, Hook>>,
+    wp_w_hooks: HashMap<u64, HashMap<u64, Hook>>,
+    wp_rw_hooks: HashMap<u64, HashMap<u64, Hook>>,
 }
 
 impl<'a> Emu<'a> {

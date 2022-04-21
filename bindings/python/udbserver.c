@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <Python.h>
 
-#include "udbserver.h"
+#include <udbserver.h>
 
 static PyObject* _udbserver(PyObject *self, PyObject *args) {
     PyObject *uc;
@@ -28,7 +28,7 @@ static PyMethodDef udbserver_methods[] = {
 static struct PyModuleDef udbserver_definition = { 
     PyModuleDef_HEAD_INIT,
     "udbserver",
-    "Unicorn debugger server.",
+    "Unicorn emulator debug server.",
     -1, 
     udbserver_methods
 };

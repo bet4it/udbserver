@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	uc "github.com/unicorn-engine/unicorn/bindings/go/unicorn"
-	udbserver "sample.com/udbserver/go/udbserver"
+	udbserver "github.com/bet4it/udbserver/bindings/go/udbserver"
 )
 
 func run() error {

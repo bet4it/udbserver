@@ -1,5 +1,7 @@
-mod arch;
+#[cfg(feature = "capi")]
 mod capi;
+
+mod arch;
 mod emu;
 mod reg;
 

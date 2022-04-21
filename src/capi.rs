@@ -5,8 +5,7 @@ use std::ffi::c_void;
 use std::ptr::null_mut;
 use unicorn_engine::Unicorn;
 
-pub type uc_handle = *mut c_void;
-pub type uc_hook = *mut c_void;
+type uc_handle = *mut c_void;
 
 static mut HANDLE: uc_handle = null_mut();
 static mut UNICORN: Option<&mut Unicorn<()>> = None;
