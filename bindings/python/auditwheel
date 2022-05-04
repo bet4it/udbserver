@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+
+# https://github.com/pypa/auditwheel/issues/76
+# https://stackoverflow.com/questions/67326886/can-i-exclude-libraries-from-auditwheel-repair
+
+# Monkey patch to not ship libunicorn
+import sys
+
+from auditwheel.main import main
+from auditwheel.policy import _POLICIES as POLICIES
+
+# libjvm is loaded dynamically; do not include it
+for p in POLICIES:
+    p['lib_whitelist'].append('libunicorn.so.2')
+    p['lib_whitelist'].append("unicorn.dll")
+    p['lib_whitelist'].append('libunicorn.2.dylib')
+
+if __name__ == "__main__":
+    sys.exit(main())

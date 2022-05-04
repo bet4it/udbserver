@@ -1,19 +1,17 @@
 #include <stdio.h>
 #include <Python.h>
-
 #include <udbserver.h>
 
 static PyObject* _udbserver(PyObject *self, PyObject *args) {
-    PyObject *uc;
+    PyObject *obj;
+    void* uc;
     unsigned short port = 1234;
     unsigned long start_addr = 0;
-    if (!PyArg_ParseTuple(args, "O|HK", &uc, &port, &start_addr)) {
+    if (!PyArg_ParseTuple(args, "OHK", &obj, &port, &start_addr)) {
         return NULL;
     }
-    PyObject* uch = PyObject_GetAttr(uc, PyUnicode_FromString("_uch"));
-    PyObject* v = PyObject_GetAttr(uch, PyUnicode_FromString("value"));
-    void *p = PyLong_AsVoidPtr(v);
-    udbserver(p, port, start_addr);
+    uc = PyLong_AsVoidPtr(obj);
+    udbserver(uc, port, start_addr);
     Py_RETURN_NONE;
 }
 
@@ -33,7 +31,8 @@ static struct PyModuleDef udbserver_definition = {
     udbserver_methods
 };
 
-PyMODINIT_FUNC PyInit_udbserver(void) {
+PyMODINIT_FUNC PyInit_udbserver_rust(void) {
     Py_Initialize();
+    
     return PyModule_Create(&udbserver_definition);
 }
