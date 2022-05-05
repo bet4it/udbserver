@@ -30,12 +30,12 @@ jobs:
               python-ver: '3.8', 
               name: 'manylinux2014_x86_64'
             }
-          - { 
-              os: ubuntu-latest,
-              arch: x32,
-              python-ver: '3.8',
-              name: 'manylinux2014_i686'
-            }
+          # - { 
+          #     os: ubuntu-latest,
+          #     arch: x32,
+          #     python-ver: '3.8',
+          #     name: 'manylinux2014_i686'
+          #   }
           - { 
               os: ubuntu-latest,
               arch: x64,
