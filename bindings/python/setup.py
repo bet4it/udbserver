@@ -6,10 +6,18 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+from distutils.command.build import build
+from distutils.command.sdist import sdist
+from setuptools.command.bdist_egg import bdist_egg
 
 ROOT_DIR = Path(os.path.realpath(__file__)).parent
+BUILD_DIR = Path(ROOT_DIR) / "python_build" / "usr"
 
 VERSION = "0.1"
+
+def cargo_clean():
+    args = ["cargo", "clean"]
+    subprocess.check_output(args, cwd=ROOT_DIR)
 
 def cargo_cinstall():
     args = ["cargo", "cinstall"]
@@ -18,9 +26,26 @@ def cargo_cinstall():
     args += ["--prefix", "/usr", "--destdir", "python_build"]
     subprocess.check_output(args, cwd=ROOT_DIR)
 
-    return Path(ROOT_DIR) / "python_build" / "usr" 
 
-BUILD_DIR = cargo_cinstall()
+class custom_sdist(sdist):
+    def run(self):
+        return sdist.run(self)
+
+class custom_build(build):
+    def run(self):
+        cargo_clean()
+        cargo_cinstall()
+        return build.run(self)
+
+class custom_bdist_egg(bdist_egg):
+    def run(self):
+        self.run_command('build')
+        return bdist_egg.run(self)
+
+cmdclass = {}
+cmdclass['build'] = custom_build
+cmdclass['sdist'] = custom_sdist
+cmdclass['bdist_egg'] = custom_bdist_egg
 
 rust_module = Extension('udbserver_rust',
                         include_dirs=[str(BUILD_DIR / "include")],
@@ -45,6 +70,7 @@ setup (name = 'udbserver',
        ],
        ext_modules = [rust_module],
        packages=["udbserver"],
+       cmdclass=cmdclass,
        install_requires=[
         "unicorn>=2.0.0rc7"
        ],
