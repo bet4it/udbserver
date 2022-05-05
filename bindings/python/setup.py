@@ -5,6 +5,7 @@ from setuptools import setup, Extension
 from pathlib import Path
 import os
 import shutil
+import sys
 import subprocess
 from distutils.command.build import build
 from distutils.command.sdist import sdist
@@ -47,11 +48,18 @@ cmdclass['build'] = custom_build
 cmdclass['sdist'] = custom_sdist
 cmdclass['bdist_egg'] = custom_bdist_egg
 
+extra_link_args = {
+    "linux" : ["-Wl,--no-as-needed", "-l:libunicorn.so"],
+    "linux2" : ["-Wl,--no-as-needed", "-l:libunicorn.so"],
+    "darwin": ["-lunicorn"]
+}
+
+
 rust_module = Extension('udbserver_rust',
                         include_dirs=[str(BUILD_DIR / "include")],
                         sources=['udbserver.c'],
                         library_dirs=["/usr/local/lib"], # Assume unicorn is install globally as cargo.toml suggests
-                        extra_link_args=["-Wl,--no-as-needed", "-l:libunicorn.so"],
+                        extra_link_args=extra_link_args.get(sys.platform, extra_link_args['linux']),
                         extra_objects=[str(BUILD_DIR / "lib" / "libudbserver.a")],
                         )
 
