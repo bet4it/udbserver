@@ -18,12 +18,12 @@ jobs:
               python-ver: '3.8',
               name: 'win_amd64'
             }
-          - { 
-              os: windows-2019,
-              arch: x32,
-              python-ver: '3.8',
-              name: 'win32'
-            }
+          # - { 
+          #     os: windows-2019,
+          #     arch: x32,
+          #     python-ver: '3.8',
+          #     name: 'win32'
+          #   }
           - { 
               os: ubuntu-latest, 
               arch: x64, 
