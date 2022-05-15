@@ -130,7 +130,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            regs.buf.extend(self.reg.to_bytes(val, reg.1));
+            regs.buf.extend(self.reg.write_u64(val, reg.1));
         }
         Ok(())
     }
@@ -139,7 +139,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
         let mut i = 0;
         for reg in self.reg.list() {
             let part = &regs.buf[i..i + reg.1];
-            let val = self.reg.from_bytes(part);
+            let val = self.reg.read_u64(part);
             i += reg.1;
             if let Some(regid) = reg.0 {
                 self.uc.reg_write(regid, val).map_err(|_| ())?
@@ -310,7 +310,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            Ok(copy_to_buf(&self.reg.to_bytes(val, reg.1), buf))
+            Ok(copy_to_buf(&self.reg.write_u64(val, reg.1), buf))
         } else if let Some(regid) = reg.0 {
             let data = &self.uc.reg_read_long(regid).map_err(|_| ())?;
             Ok(copy_to_buf(data, buf))
@@ -324,7 +324,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
         assert!(reg.1 == val.len(), "Length mismatch when write register {}", reg.0.unwrap());
         if let Some(regid) = reg.0 {
             if reg.1 <= 8 {
-                let v = self.reg.from_bytes(val);
+                let v = self.reg.read_u64(val);
                 self.uc.reg_write(regid, v).map_err(|_| ())?;
             } else {
                 self.uc.reg_write_long(regid, val).map_err(|_| ())?;

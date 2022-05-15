@@ -30,17 +30,12 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
 }
 
 pub fn udbserver(uc: &mut Unicorn<()>, port: u16, start_addr: u64) -> DynResult<()> {
-    uc.add_code_hook(1, 0, |_uc: &mut Unicorn<'_, ()>, _addr: u64, _size: u32| {})
+    uc.add_code_hook(1, 0, |_: &mut Unicorn<'_, ()>, _: u64, _: u32| {})
         .expect("Failed to add empty code hook");
-    uc.add_mem_hook(
-        HookType::MEM_READ,
-        1,
-        0,
-        |_uc: &mut Unicorn<'_, ()>, _mem_type: MemType, _addr: u64, _size: usize, _value: i64| true,
-    )
-    .expect("Failed to add empty mem hook");
+    uc.add_mem_hook(HookType::MEM_READ, 1, 0, |_: &mut Unicorn<'_, ()>, _: MemType, _: u64, _: usize, _: i64| true)
+        .expect("Failed to add empty mem hook");
     if start_addr != 0 {
-        uc.add_code_hook(start_addr, start_addr, move |uc: &mut Unicorn<'_, ()>, _addr: u64, _size: u32| {
+        uc.add_code_hook(start_addr, start_addr, move |uc: &mut Unicorn<'_, ()>, _: u64, _: u32| {
             udbserver_entry(uc, port).expect("Failed to start udbserver")
         })
         .expect("Failed to add udbserver hook");

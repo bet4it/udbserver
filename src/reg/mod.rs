@@ -61,7 +61,7 @@ impl Register {
         }
     }
 
-    pub fn from_bytes(&self, bytes: &[u8]) -> u64 {
+    pub fn read_u64(&self, bytes: &[u8]) -> u64 {
         match self.endian {
             Endian::Little => match bytes.len() {
                 2 => u16::from_le_bytes(bytes.try_into().unwrap()) as u64,
@@ -78,7 +78,7 @@ impl Register {
         }
     }
 
-    pub fn to_bytes(&self, val: u64, len: usize) -> Vec<u8> {
+    pub fn write_u64(&self, val: u64, len: usize) -> Vec<u8> {
         match self.endian {
             Endian::Little => val.to_le_bytes()[..len].to_vec(),
             Endian::Big => val.to_be_bytes()[8 - len..].to_vec(),
