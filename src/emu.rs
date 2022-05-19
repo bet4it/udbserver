@@ -6,6 +6,7 @@ use gdbstub::common::Signal;
 use gdbstub::target;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{TargetError, TargetResult};
+use singlyton::{Singleton, SingletonOption};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::ffi::c_void;
@@ -14,17 +15,9 @@ use unicorn_engine::Unicorn;
 
 type Hook = *mut c_void;
 
-struct EmuState {
-    step_state: bool,
-    step_hook: Option<Hook>,
-    watch_addr: Option<u64>,
-}
-
-static mut G: EmuState = EmuState {
-    step_state: false,
-    step_hook: None,
-    watch_addr: None,
-};
+static STEP_STATE: Singleton<bool> = Singleton::new(false);
+static STEP_HOOK: SingletonOption<Hook> = SingletonOption::new();
+static WATCH_ADDR: SingletonOption<u64> = SingletonOption::new();
 
 fn copy_to_buf(data: &[u8], buf: &mut [u8]) -> usize {
     let len = data.len();
@@ -45,30 +38,24 @@ fn copy_range_to_buf(data: &[u8], offset: u64, length: usize, buf: &mut [u8]) ->
 
 fn step_hook(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
     let mut addr = None;
-    unsafe {
-        if G.step_state {
-            G.step_state = false;
-            return;
-        }
-        if let Some(step_hook) = G.step_hook {
-            uc.remove_hook(step_hook).expect("Failed to remove step hook");
-            G.step_hook = None;
-        }
-        if let Some(watch_addr) = G.watch_addr {
-            addr = Some(watch_addr);
-            G.watch_addr = None
-        }
+    if *STEP_STATE.get() {
+        STEP_STATE.replace(false);
+        return;
+    }
+    if let Some(step_hook) = STEP_HOOK.take() {
+        uc.remove_hook(step_hook).expect("Failed to remove step hook");
+    }
+    if let Some(watch_addr) = WATCH_ADDR.take() {
+        addr = Some(watch_addr);
     }
     crate::udbserver_resume(addr).expect("Failed to resume udbserver");
 }
 
 fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
-    unsafe {
-        if G.watch_addr == None {
-            G.watch_addr = Some(addr);
-            if G.step_hook.is_none() {
-                G.step_hook = Some(uc.add_code_hook(1, 0, step_hook).expect("Failed to add code hook"));
-            }
+    if WATCH_ADDR.is_none() {
+        WATCH_ADDR.replace(addr);
+        if STEP_HOOK.is_none() {
+            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_hook).expect("Failed to add code hook"));
         }
     }
     true
@@ -192,10 +179,8 @@ impl target::ext::base::singlethread::SingleThreadSingleStep for Emu<'_> {
             return Err("no support for stepping with signal");
         }
 
-        unsafe {
-            G.step_state = true;
-            G.step_hook = Some(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
-        }
+        STEP_STATE.replace(true);
+        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
 
         Ok(())
     }
