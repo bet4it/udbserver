@@ -11,11 +11,14 @@ use gdbstub::stub::{DisconnectReason, GdbStubBuilder, SingleThreadStopReason};
 use gdbstub::target::ext::breakpoints::WatchKind;
 use singlyton::SingletonOption;
 use std::borrow::BorrowMut;
+use std::ffi::c_void;
 use std::net::{TcpListener, TcpStream};
 use unicorn_engine::unicorn_const::{HookType, MemType};
 use unicorn_engine::Unicorn;
 
 pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+type Hook = *mut c_void;
 
 static GDBSTUB: SingletonOption<GdbStubStateMachine<emu::Emu, TcpStream>> = SingletonOption::new();
 static EMU: SingletonOption<emu::Emu> = SingletonOption::new();
@@ -32,28 +35,30 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
 }
 
 pub fn udbserver(uc: &mut Unicorn<()>, port: u16, start_addr: u64) -> DynResult<()> {
-    uc.add_code_hook(1, 0, |_: &mut Unicorn<'_, ()>, _: u64, _: u32| {})
+    let code_hook = uc
+        .add_code_hook(1, 0, |_: &mut Unicorn<'_, ()>, _: u64, _: u32| {})
         .expect("Failed to add empty code hook");
-    uc.add_mem_hook(HookType::MEM_READ, 1, 0, |_: &mut Unicorn<'_, ()>, _: MemType, _: u64, _: usize, _: i64| true)
+    let mem_hook = uc
+        .add_mem_hook(HookType::MEM_READ, 1, 0, |_: &mut Unicorn<'_, ()>, _: MemType, _: u64, _: usize, _: i64| true)
         .expect("Failed to add empty mem hook");
     if start_addr != 0 {
         uc.add_code_hook(start_addr, start_addr, move |uc: &mut Unicorn<'_, ()>, _: u64, _: u32| {
-            udbserver_entry(uc, port).expect("Failed to start udbserver")
+            udbserver_entry(uc, port, code_hook, mem_hook).expect("Failed to start udbserver")
         })
         .expect("Failed to add udbserver hook");
         Ok(())
     } else {
-        udbserver_entry(uc, port)
+        udbserver_entry(uc, port, code_hook, mem_hook)
     }
 }
 
-fn udbserver_entry(uc: &mut Unicorn<()>, port: u16) -> DynResult<()> {
+fn udbserver_entry(uc: &mut Unicorn<()>, port: u16, code_hook: Hook, mem_hook: Hook) -> DynResult<()> {
     if GDBSTUB.is_some() {
         return Ok(());
     }
     let mut emu;
     unsafe {
-        emu = emu::Emu::new(std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc))?;
+        emu = emu::Emu::new(std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc), code_hook, mem_hook)?;
     }
     GDBSTUB.replace(GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(&mut emu)?);
     EMU.replace(emu);
@@ -100,6 +105,8 @@ fn udbserver_loop() -> DynResult<()> {
 
 fn handle_disconnect(reason: DisconnectReason) -> DynResult<()> {
     EMU.take();
+    #[cfg(feature = "capi")]
+    capi::clean();
     match reason {
         DisconnectReason::Disconnect => {
             println!("Disconnect!");

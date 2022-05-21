@@ -1,6 +1,7 @@
 use crate::arch;
 use crate::reg::Register;
 use crate::DynResult;
+use crate::Hook;
 
 use gdbstub::common::Signal;
 use gdbstub::target;
@@ -9,11 +10,8 @@ use gdbstub::target::{TargetError, TargetResult};
 use singlyton::{Singleton, SingletonOption};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::ffi::c_void;
 use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
 use unicorn_engine::Unicorn;
-
-type Hook = *mut c_void;
 
 static STEP_STATE: Singleton<bool> = Singleton::new(false);
 static STEP_HOOK: SingletonOption<Hook> = SingletonOption::new();
@@ -64,6 +62,8 @@ fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _
 pub struct Emu<'a> {
     uc: &'a mut Unicorn<'static, ()>,
     reg: Register,
+    code_hook: Hook,
+    mem_hook: Hook,
     bp_sw_hooks: HashMap<u64, Hook>,
     bp_hw_hooks: HashMap<u64, Hook>,
     wp_r_hooks: HashMap<u64, HashMap<u64, Hook>>,
@@ -72,7 +72,7 @@ pub struct Emu<'a> {
 }
 
 impl<'a> Emu<'a> {
-    pub fn new(uc: &'a mut Unicorn<'static, ()>) -> DynResult<Emu<'a>> {
+    pub fn new(uc: &'a mut Unicorn<'static, ()>, code_hook: Hook, mem_hook: Hook) -> DynResult<Emu<'a>> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
         let mode = Mode::from_bits(query_mode as i32).unwrap();
@@ -80,12 +80,21 @@ impl<'a> Emu<'a> {
         Ok(Emu {
             uc,
             reg,
+            code_hook,
+            mem_hook,
             bp_sw_hooks: HashMap::new(),
             bp_hw_hooks: HashMap::new(),
             wp_r_hooks: HashMap::new(),
             wp_w_hooks: HashMap::new(),
             wp_rw_hooks: HashMap::new(),
         })
+    }
+}
+
+impl<'a> Drop for Emu<'a> {
+    fn drop(&mut self) {
+        self.uc.remove_hook(self.code_hook).expect("Failed to remove empty code hook");
+        self.uc.remove_hook(self.mem_hook).expect("Failed to remove empty mem hook");
     }
 }
 
@@ -141,7 +150,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
     }
 
     fn read_addrs(&mut self, start_addr: u64, data: &mut [u8]) -> TargetResult<(), Self> {
-        match self.uc.mem_read(start_addr as u64, data) {
+        match self.uc.mem_read(start_addr, data) {
             Ok(_) => Ok(()),
             Err(uc_error::READ_UNMAPPED) => Err(TargetError::Errno(1)),
             Err(_) => Err(TargetError::Fatal("Failed to read addr")),
@@ -149,7 +158,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
     }
 
     fn write_addrs(&mut self, start_addr: u64, data: &[u8]) -> TargetResult<(), Self> {
-        match self.uc.mem_write(start_addr as u64, data) {
+        match self.uc.mem_write(start_addr, data) {
             Ok(_) => Ok(()),
             Err(uc_error::WRITE_UNMAPPED) => Err(TargetError::Errno(1)),
             Err(_) => Err(TargetError::Fatal("Failed to write addr")),
