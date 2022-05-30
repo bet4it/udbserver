@@ -1,12 +1,13 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <Python.h>
 
 #include <udbserver.h>
 
 static PyObject* _udbserver(PyObject *self, PyObject *args) {
     PyObject *uc;
-    unsigned short port = 1234;
-    unsigned long start_addr = 0;
+    uint16_t port = 1234;
+    uint64_t start_addr = 0;
     if (!PyArg_ParseTuple(args, "O|HK", &uc, &port, &start_addr)) {
         return NULL;
     }
