@@ -18,8 +18,8 @@ capi = []
 
 [dependencies]
 gdbstub = "0.6"
-unicorn-engine = { version = "2.0.0-rc7", features = ["use_system_unicorn"] }
-singlyton = "*"
+singlyton = "4"
+unicorn-engine = { version = "2.0.0", features = ["dynamic_linkage"] }
 
 [package.metadata.capi.header]
 subdirectory = false
