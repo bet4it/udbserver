@@ -16,8 +16,7 @@ use std::net::{TcpListener, TcpStream};
 use unicorn_engine::unicorn_const::{HookType, MemType};
 use unicorn_engine::Unicorn;
 
-pub type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
-
+type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
 type Hook = *mut c_void;
 
 static GDBSTUB: SingletonOption<GdbStubStateMachine<emu::Emu, TcpStream>> = SingletonOption::new();
@@ -90,13 +89,13 @@ fn udbserver_loop() -> DynResult<()> {
     let mut gdb = GDBSTUB.take().unwrap();
     loop {
         gdb = match gdb {
-            GdbStubStateMachine::Idle(mut gdb) => {
-                let byte = gdb.borrow_conn().read()?;
-                gdb.incoming_data(EMU.get_mut().borrow_mut(), byte)?
+            GdbStubStateMachine::Idle(mut gdb_inner) => {
+                let byte = gdb_inner.borrow_conn().read()?;
+                gdb_inner.incoming_data(EMU.get_mut().borrow_mut(), byte)?
             }
             GdbStubStateMachine::Running(_) => break,
             GdbStubStateMachine::CtrlCInterrupt(_) => break,
-            GdbStubStateMachine::Disconnected(gdb) => return handle_disconnect(gdb.get_reason()),
+            GdbStubStateMachine::Disconnected(gdb_inner) => return handle_disconnect(gdb_inner.get_reason()),
         }
     }
     GDBSTUB.replace(gdb);

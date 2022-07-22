@@ -34,8 +34,7 @@ fn copy_range_to_buf(data: &[u8], offset: u64, length: usize, buf: &mut [u8]) ->
     copy_to_buf(data, buf)
 }
 
-fn step_hook(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
-    let mut addr = None;
+fn step_cb(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
     if *STEP_STATE.get() {
         STEP_STATE.replace(false);
         return;
@@ -43,17 +42,14 @@ fn step_hook(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
     if let Some(step_hook) = STEP_HOOK.take() {
         uc.remove_hook(step_hook).expect("Failed to remove step hook");
     }
-    if let Some(watch_addr) = WATCH_ADDR.take() {
-        addr = Some(watch_addr);
-    }
-    crate::udbserver_resume(addr).expect("Failed to resume udbserver");
+    crate::udbserver_resume(WATCH_ADDR.take()).expect("Failed to resume udbserver");
 }
 
-fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
+fn watch_cb(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
     if WATCH_ADDR.is_none() {
         WATCH_ADDR.replace(addr);
         if STEP_HOOK.is_none() {
-            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_hook).expect("Failed to add code hook"));
+            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_cb).expect("Failed to add code hook"));
         }
     }
     true
@@ -189,7 +185,7 @@ impl target::ext::base::singlethread::SingleThreadSingleStep for Emu<'_> {
         }
 
         STEP_STATE.replace(true);
-        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
+        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_cb).map_err(|_| "Failed to add code hook")?);
 
         Ok(())
     }
@@ -214,7 +210,7 @@ impl target::ext::breakpoints::Breakpoints for Emu<'_> {
 
 macro_rules! add_breakpoint {
     ( $self:ident, $addr:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_hook) {
+        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_cb) {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
@@ -222,7 +218,7 @@ macro_rules! add_breakpoint {
         Ok(true)
     }};
     ( $self:ident, $mem_type:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), mem_hook) {
+        let hook = match $self.uc.add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), watch_cb) {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };

@@ -13,13 +13,12 @@ static UNICORN: SingletonOption<Unicorn<()>> = SingletonOption::new();
 #[no_mangle]
 pub extern "C" fn udbserver(handle: uc_handle, port: u16, start_addr: u64) {
     if UNICORN.is_some() {
-        println!("Only one udbserver can be started at a time");
-        return
+        return;
     }
     if let Ok(unicorn) = Unicorn::try_from(handle) {
         UNICORN.replace(unicorn);
     } else {
-        panic!("Failed convert handle to Unicorn");
+        panic!("Failed to convert handle to Unicorn");
     }
     crate::udbserver(UNICORN.get_mut().borrow_mut(), port, start_addr).expect("Failed to start udbserver");
 }
