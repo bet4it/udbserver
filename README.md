@@ -50,7 +50,7 @@ And you can try it by:
 $ cargo run --example server
 ```
 
-Then you can connect it with a `GDB` client.
+Then you can connect it with `gdb-multiarch`.
 
 ## Installation
 
