@@ -3,6 +3,7 @@ use unicorn_engine::unicorn_const::{Arch, Mode};
 
 mod arm;
 mod arm64;
+mod m68k;
 mod mips;
 mod ppc;
 mod x64;
@@ -29,6 +30,7 @@ impl Register {
         let map = match arch {
             Arch::ARM => &arm::REGMAP,
             Arch::ARM64 => &arm64::REGMAP,
+            Arch::M68K => &m68k::REGMAP,
             Arch::MIPS => &mips::REGMAP,
             Arch::PPC => &ppc::REGMAP,
             Arch::X86 => {

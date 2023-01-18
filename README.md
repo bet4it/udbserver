@@ -21,6 +21,7 @@ When you do emulation with [Unicorn Engine](https://www.unicorn-engine.org/), do
 * x86\_64
 * ARM
 * AArch64
+* M68K
 * MIPS
 * PowerPC
 
