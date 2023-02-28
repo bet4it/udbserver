@@ -21,6 +21,7 @@ When you do emulation with [Unicorn Engine](https://www.unicorn-engine.org/), do
 * x86\_64
 * ARM
 * AArch64
+* M68K
 * MIPS
 * PowerPC
 
@@ -50,7 +51,7 @@ And you can try it by:
 $ cargo run --example server
 ```
 
-Then you can connect it with a `GDB` client.
+Then you can connect it with `gdb-multiarch`.
 
 ## Installation
 

@@ -1,30 +1,21 @@
 use crate::arch;
 use crate::reg::Register;
 use crate::DynResult;
+use crate::Hook;
 
 use gdbstub::common::Signal;
 use gdbstub::target;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{TargetError, TargetResult};
+use singlyton::{Singleton, SingletonOption};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::ffi::c_void;
 use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
 use unicorn_engine::Unicorn;
 
-type Hook = *mut c_void;
-
-struct EmuState {
-    step_state: bool,
-    step_hook: Option<Hook>,
-    watch_addr: Option<u64>,
-}
-
-static mut G: EmuState = EmuState {
-    step_state: false,
-    step_hook: None,
-    watch_addr: None,
-};
+static STEP_STATE: Singleton<bool> = Singleton::new(false);
+static STEP_HOOK: SingletonOption<Hook> = SingletonOption::new();
+static WATCH_ADDR: SingletonOption<u64> = SingletonOption::new();
 
 fn copy_to_buf(data: &[u8], buf: &mut [u8]) -> usize {
     let len = data.len();
@@ -43,32 +34,22 @@ fn copy_range_to_buf(data: &[u8], offset: u64, length: usize, buf: &mut [u8]) ->
     copy_to_buf(data, buf)
 }
 
-fn step_hook(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
-    let mut addr = None;
-    unsafe {
-        if G.step_state {
-            G.step_state = false;
-            return;
-        }
-        if let Some(step_hook) = G.step_hook {
-            uc.remove_hook(step_hook).expect("Failed to remove step hook");
-            G.step_hook = None;
-        }
-        if let Some(watch_addr) = G.watch_addr {
-            addr = Some(watch_addr);
-            G.watch_addr = None
-        }
+fn step_cb(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
+    if *STEP_STATE.get() {
+        STEP_STATE.replace(false);
+        return;
     }
-    crate::udbserver_resume(addr).expect("Failed to resume udbserver");
+    if let Some(step_hook) = STEP_HOOK.take() {
+        uc.remove_hook(step_hook).expect("Failed to remove step hook");
+    }
+    crate::udbserver_resume(WATCH_ADDR.take()).expect("Failed to resume udbserver");
 }
 
-fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
-    unsafe {
-        if G.watch_addr == None {
-            G.watch_addr = Some(addr);
-            if G.step_hook.is_none() {
-                G.step_hook = Some(uc.add_code_hook(1, 0, step_hook).expect("Failed to add code hook"));
-            }
+fn watch_cb(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
+    if WATCH_ADDR.is_none() {
+        WATCH_ADDR.replace(addr);
+        if STEP_HOOK.is_none() {
+            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_cb).expect("Failed to add code hook"));
         }
     }
     true
@@ -77,6 +58,8 @@ fn mem_hook(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _
 pub struct Emu<'a> {
     uc: &'a mut Unicorn<'static, ()>,
     reg: Register,
+    code_hook: Hook,
+    mem_hook: Hook,
     bp_sw_hooks: HashMap<u64, Hook>,
     bp_hw_hooks: HashMap<u64, Hook>,
     wp_r_hooks: HashMap<u64, HashMap<u64, Hook>>,
@@ -85,7 +68,7 @@ pub struct Emu<'a> {
 }
 
 impl<'a> Emu<'a> {
-    pub fn new(uc: &'a mut Unicorn<'static, ()>) -> DynResult<Emu<'a>> {
+    pub fn new(uc: &'a mut Unicorn<'static, ()>, code_hook: Hook, mem_hook: Hook) -> DynResult<Emu<'a>> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
         let mode = Mode::from_bits(query_mode as i32).unwrap();
@@ -93,12 +76,21 @@ impl<'a> Emu<'a> {
         Ok(Emu {
             uc,
             reg,
+            code_hook,
+            mem_hook,
             bp_sw_hooks: HashMap::new(),
             bp_hw_hooks: HashMap::new(),
             wp_r_hooks: HashMap::new(),
             wp_w_hooks: HashMap::new(),
             wp_rw_hooks: HashMap::new(),
         })
+    }
+}
+
+impl<'a> Drop for Emu<'a> {
+    fn drop(&mut self) {
+        self.uc.remove_hook(self.code_hook).expect("Failed to remove empty code hook");
+        self.uc.remove_hook(self.mem_hook).expect("Failed to remove empty mem hook");
     }
 }
 
@@ -130,7 +122,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            regs.buf.extend(self.reg.to_bytes(val, reg.1));
+            regs.buf.extend(self.reg.write_u64(val, reg.1));
         }
         Ok(())
     }
@@ -139,7 +131,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
         let mut i = 0;
         for reg in self.reg.list() {
             let part = &regs.buf[i..i + reg.1];
-            let val = self.reg.from_bytes(part);
+            let val = self.reg.read_u64(part);
             i += reg.1;
             if let Some(regid) = reg.0 {
                 self.uc.reg_write(regid, val).map_err(|_| ())?
@@ -154,7 +146,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
     }
 
     fn read_addrs(&mut self, start_addr: u64, data: &mut [u8]) -> TargetResult<(), Self> {
-        match self.uc.mem_read(start_addr as u64, data) {
+        match self.uc.mem_read(start_addr, data) {
             Ok(_) => Ok(()),
             Err(uc_error::READ_UNMAPPED) => Err(TargetError::Errno(1)),
             Err(_) => Err(TargetError::Fatal("Failed to read addr")),
@@ -162,7 +154,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
     }
 
     fn write_addrs(&mut self, start_addr: u64, data: &[u8]) -> TargetResult<(), Self> {
-        match self.uc.mem_write(start_addr as u64, data) {
+        match self.uc.mem_write(start_addr, data) {
             Ok(_) => Ok(()),
             Err(uc_error::WRITE_UNMAPPED) => Err(TargetError::Errno(1)),
             Err(_) => Err(TargetError::Fatal("Failed to write addr")),
@@ -192,10 +184,8 @@ impl target::ext::base::singlethread::SingleThreadSingleStep for Emu<'_> {
             return Err("no support for stepping with signal");
         }
 
-        unsafe {
-            G.step_state = true;
-            G.step_hook = Some(self.uc.add_code_hook(1, 0, step_hook).map_err(|_| "Failed to add code hook")?);
-        }
+        STEP_STATE.replace(true);
+        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_cb).map_err(|_| "Failed to add code hook")?);
 
         Ok(())
     }
@@ -220,7 +210,7 @@ impl target::ext::breakpoints::Breakpoints for Emu<'_> {
 
 macro_rules! add_breakpoint {
     ( $self:ident, $addr:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_hook) {
+        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_cb) {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
@@ -228,7 +218,7 @@ macro_rules! add_breakpoint {
         Ok(true)
     }};
     ( $self:ident, $mem_type:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), mem_hook) {
+        let hook = match $self.uc.add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), watch_cb) {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
@@ -310,7 +300,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
                 Some(regid) => self.uc.reg_read(regid).map_err(|_| ())?,
                 None => 0,
             };
-            Ok(copy_to_buf(&self.reg.to_bytes(val, reg.1), buf))
+            Ok(copy_to_buf(&self.reg.write_u64(val, reg.1), buf))
         } else if let Some(regid) = reg.0 {
             let data = &self.uc.reg_read_long(regid).map_err(|_| ())?;
             Ok(copy_to_buf(data, buf))
@@ -324,7 +314,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
         assert!(reg.1 == val.len(), "Length mismatch when write register {}", reg.0.unwrap());
         if let Some(regid) = reg.0 {
             if reg.1 <= 8 {
-                let v = self.reg.from_bytes(val);
+                let v = self.reg.read_u64(val);
                 self.uc.reg_write(regid, v).map_err(|_| ())?;
             } else {
                 self.uc.reg_write_long(regid, val).map_err(|_| ())?;

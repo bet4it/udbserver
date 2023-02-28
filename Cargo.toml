@@ -19,8 +19,8 @@ capi = []
 
 [dependencies]
 gdbstub = "0.6"
-# Switch to release version until next unicorn release
-unicorn-engine = { git = "https://github.com/unicorn-engine/unicorn", branch="dev", features = ["use_system_unicorn", "dynamic_linkage"] }
+singlyton = "4"
+unicorn-engine = { version = "2.0.0", features = ["dynamic_linkage"] }
 
 [package.metadata.capi.header]
 subdirectory = false

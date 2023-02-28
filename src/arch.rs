@@ -1,7 +1,7 @@
 use core::num::NonZeroUsize;
 use gdbstub::arch::{Arch, RegId, Registers, SingleStepGdbBehavior};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct GenericRegId(pub usize);
 
@@ -11,7 +11,7 @@ impl RegId for GenericRegId {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct GenericRegs {
     pub buf: Vec<u8>,
 }

@@ -1,6 +1,5 @@
 use unicorn_engine::unicorn_const::{Arch, Mode, Permission};
-use unicorn_engine::RegisterARM;
-use unicorn_engine::Unicorn;
+use unicorn_engine::{RegisterARM, Unicorn};
 
 fn main() {
     let arm_code32: Vec<u8> = vec![
