@@ -9,7 +9,7 @@ import sys
 from auditwheel.main import main
 from auditwheel.policy import _POLICIES as POLICIES
 
-# libjvm is loaded dynamically; do not include it
+# libunicorn is loaded dynamically; do not include it
 for p in POLICIES:
     p['lib_whitelist'].append('libunicorn.so.2')
     p['lib_whitelist'].append("unicorn.dll")

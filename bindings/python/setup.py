@@ -8,7 +8,7 @@ import shutil
 import sys
 import subprocess
 from distutils.command.build import build
-from distutils.command.sdist import sdist
+from setuptools.command.sdist import sdist
 from setuptools.command.bdist_egg import bdist_egg
 
 ROOT_DIR = Path(os.path.realpath(__file__)).parent
