@@ -20,7 +20,7 @@ capi = []
 [dependencies]
 gdbstub = "0.6"
 singlyton = "4"
-unicorn-engine = { version = "2.0.0", features = ["dynamic_linkage"] }
+unicorn-engine = { git = "https://github.com/bet4it/unicorn", branch="dylib", features = ["dynamic_linkage"] }
 
 [package.metadata.capi.header]
 subdirectory = false

@@ -12,119 +12,62 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - { 
+          - {
               os: windows-2019,
               arch: x64,
               python-ver: '3.8',
               name: 'win_amd64'
             }
-          # - { 
+          # - {
           #     os: windows-2019,
           #     arch: x32,
           #     python-ver: '3.8',
           #     name: 'win32'
           #   }
-          - { 
-              os: ubuntu-latest, 
-              arch: x64, 
-              python-ver: '3.8', 
+          - {
+              os: ubuntu-latest,
+              arch: x64,
+              python-ver: '3.8',
               name: 'manylinux2014_x86_64'
             }
-          # - { 
+          # - {
           #     os: ubuntu-latest,
           #     arch: x32,
           #     python-ver: '3.8',
           #     name: 'manylinux2014_i686'
           #   }
-          - { 
-              os: ubuntu-latest,
-              arch: x64,
-              python-ver: '3.8',
-              name: 'sdist'
-            }
-          - { 
+          # - {
+          #     os: ubuntu-latest,
+          #     arch: x64,
+          #     python-ver: '3.8',
+          #     name: 'sdist'
+          #   }
+          - {
              os: macos-latest,
              arch: x64,
              python-ver: '3.8',
              name: 'macos_x86_64'
             }
+
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
-    - name: '🦀️ Set up Rust'
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-        default: true
-
-    - name: '🛠️ Set up Python'
-      uses: actions/setup-python@v2
+    - name: '🐍 Set up Python'
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.config.python-ver }}
 
-    - name: '🛠️ Add msbuild to PATH'
-      if: contains(matrix.config.name, 'win')
-      uses: microsoft/setup-msbuild@v1.0.3
-      with:
-        vs-version: '16.5'
-    
-    - name: '🛠️ Win MSVC 32 dev cmd setup'
-      if: contains(matrix.config.name, 'win32')
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x86
-
-    - name: '🛠️ Win MSVC 64 dev cmd setup'
-      if: contains(matrix.config.name, 'win_amd64')
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-
-    - name: '🛠️ Win build dependencies'
-      if: contains(matrix.config.name, 'win')
-      shell: bash
-      run: |
-        choco install ninja cmake
-
     - name: '🛠️ Install dependencies'
       run: |
-        pip install setuptools wheel && cargo install cargo-c
-    
-    - name: '🦄️ Install unicorn'
-      if: contains(matrix.config.name, 'macos')
-      run: |
-        rm -rf unicorn
-        git clone -b dev https://github.com/unicorn-engine/unicorn unicorn
-        cd unicorn
-        mkdir build_dylib
-        cd build_dylib
-        cmake .. -DCMAKE_BUILD_TYPE=Release
-        make -j4
-        sudo make install
-
+        pip install build
 
     - name: '🚧 Build distribution'
-      shell: bash 
       run: |
-        if [ ${{ matrix.config.name }} == 'win32' ]; then
-              cd bindings/python && python setup.py build -p win32 sdist bdist_wheel -p win32
-              rm dist/*.tar.gz
-        elif [ ${{ matrix.config.name }} == 'manylinux2014_i686' ]; then
-              docker run --rm -v `pwd`/:/work dockcross/manylinux2014-x86 > ./dockcross
-              chmod +x ./dockcross
-              ./dockcross bindings/python/build_wheel.sh
-        elif [ ${{ matrix.config.name }} == 'manylinux2014_x86_64' ]; then
-              docker run --rm -v `pwd`/:/work dockcross/manylinux2014-x64 > ./dockcross
-              chmod +x ./dockcross
-              ./dockcross bindings/python/build_wheel.sh
-        elif [ ${{ matrix.config.name }} == 'sdist' ]; then
-              cd bindings/python && python setup.py sdist
-        else
-              cd bindings/python && python setup.py bdist_wheel
-        fi
+        cd bindings/python
+        python -m build -w
+
     - name: '📤 Upload artifact'
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
          path: ${{ github.workspace }}/bindings/python/dist/*
 
