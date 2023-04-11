@@ -23,7 +23,7 @@ static GDBSTUB: SingletonOption<GdbStubStateMachine<emu::Emu, TcpStream>> = Sing
 static EMU: SingletonOption<emu::Emu> = SingletonOption::new();
 
 fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
-    let sockaddr = format!("127.0.0.1:{}", port);
+    let sockaddr = format!("0.0.0.0:{}", port);
     eprintln!("Waiting for a GDB connection on {:?}...", sockaddr);
 
     let sock = TcpListener::bind(sockaddr)?;
