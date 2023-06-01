@@ -6,48 +6,13 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.config.os }}
-    name: ${{ matrix.config.name }}
     strategy:
       fail-fast: false
       matrix:
-        config:
-          - {
-              os: windows-2019,
-              arch: x64,
-              python-ver: '3.8',
-              name: 'win_amd64'
-            }
-          # - {
-          #     os: windows-2019,
-          #     arch: x32,
-          #     python-ver: '3.8',
-          #     name: 'win32'
-          #   }
-          - {
-              os: ubuntu-latest,
-              arch: x64,
-              python-ver: '3.8',
-              name: 'manylinux2014_x86_64'
-            }
-          # - {
-          #     os: ubuntu-latest,
-          #     arch: x32,
-          #     python-ver: '3.8',
-          #     name: 'manylinux2014_i686'
-          #   }
-          # - {
-          #     os: ubuntu-latest,
-          #     arch: x64,
-          #     python-ver: '3.8',
-          #     name: 'sdist'
-          #   }
-          - {
-             os: macos-latest,
-             arch: x64,
-             python-ver: '3.8',
-             name: 'macos_x86_64'
-            }
+        os: [ windows, macos ]
+
+    runs-on: ${{ matrix.os }}-latest
+    name: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v3
@@ -55,7 +20,7 @@ jobs:
     - name: '🐍 Set up Python'
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.config.python-ver }}
+        python-version: 3.8
 
     - name: '🛠️ Install dependencies'
       run: |
@@ -71,8 +36,41 @@ jobs:
       with:
          path: ${{ github.workspace }}/bindings/python/dist/*
 
+  cross:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ i686, x86_64, aarch64 ]
+
+    name: manylinux2014_${{ matrix.target }}
+    runs-on: ubuntu-latest
+    container: messense/manylinux2014-cross:${{ matrix.target }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: '🦀️ Set up Rust'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        target: ${{ matrix.target }}-unknown-linux-gnu
+
+    - name: '🛠️ Install dependencies'
+      run: |
+        apt install -y pkg-config
+        pip install setuptools-rust setuptools_scm
+
+    - name: '🚧 Build distribution'
+      run: |
+        cd bindings/python
+        python setup.py bdist_wheel --plat-name=manylinux2014_${{ matrix.target }}
+
+    - name: '📤 Upload artifact'
+      uses: actions/upload-artifact@v3
+      with:
+         path: ${{ github.workspace }}/bindings/python/dist/*
+
   publish:
-    needs: [build]
+    needs: [build, cross]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags')
     steps:

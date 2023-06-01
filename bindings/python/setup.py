@@ -1,6 +1,6 @@
 import os
 import sysconfig
-from setuptools import setup, find_packages
+from setuptools import setup
 from setuptools_rust import Binding, RustExtension
 from setuptools.command.build_ext import build_ext
 from wheel.bdist_wheel import bdist_wheel
@@ -19,7 +19,6 @@ class CustomBdistWheel(bdist_wheel):
 
 setup(
     name='udbserver',
-    packages=find_packages(),
     rust_extensions=[RustExtension('udbserver.libudbserver', binding=Binding.NoBinding, path='../../Cargo.toml', features=['capi'])],
     cmdclass={'build_ext': CustomBuildExt, 'bdist_wheel': CustomBdistWheel},
 )
