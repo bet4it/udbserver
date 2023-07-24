@@ -6,7 +6,7 @@ description = "Provide Unicorn emulator with a debug server"
 license = "MIT"
 edition = "2021"
 readme = "README.md"
-repository = "http://github.com/bet4it/udbserver"
+repository = "https://github.com/bet4it/udbserver"
 categories = ["emulators"]
 keywords = ["gdb", "debugging", "emulator"]
 
