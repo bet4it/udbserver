@@ -63,7 +63,7 @@ To build and install it you need to use [cargo-c](https://crates.io/crates/cargo
 $ cargo install cargo-c
 $ mkdir build
 $ cargo cinstall --release --prefix=/usr --destdir build
-$ sudo cp -a build/* /
+$ sudo cp -dr build/* /
 ```
 
 ## Language bindings
