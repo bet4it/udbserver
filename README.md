@@ -24,6 +24,7 @@ When you do emulation with [Unicorn Engine](https://www.unicorn-engine.org/), do
 * M68K
 * MIPS
 * PowerPC
+* RISC-V
 
 # Usage
 

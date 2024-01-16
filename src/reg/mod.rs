@@ -6,6 +6,8 @@ mod arm64;
 mod m68k;
 mod mips;
 mod ppc;
+mod riscv32;
+mod riscv64;
 mod x64;
 mod x86;
 
@@ -33,6 +35,13 @@ impl Register {
             Arch::M68K => &m68k::REGMAP,
             Arch::MIPS => &mips::REGMAP,
             Arch::PPC => &ppc::REGMAP,
+            Arch::RISCV => {
+                if mode.contains(Mode::RISCV32) {
+                    &riscv32::REGMAP
+                } else {
+                    &riscv64::REGMAP
+                }
+            }
             Arch::X86 => {
                 if mode.contains(Mode::MODE_32) {
                     &x86::REGMAP
