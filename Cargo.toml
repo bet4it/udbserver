@@ -6,7 +6,7 @@ description = "Provide Unicorn emulator with a debug server"
 license = "MIT"
 edition = "2021"
 readme = "README.md"
-repository = "http://github.com/bet4it/udbserver"
+repository = "https://github.com/bet4it/udbserver"
 categories = ["emulators"]
 keywords = ["gdb", "debugging", "emulator"]
 
@@ -18,7 +18,7 @@ crate-type = ["lib"]
 capi = []
 
 [dependencies]
-gdbstub = "0.6"
+gdbstub = "0.7"
 singlyton = "4"
 unicorn-engine = { git = "https://github.com/bet4it/unicorn", branch="dylib", features = ["dynamic_linkage"] }
 

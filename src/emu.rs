@@ -145,9 +145,9 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu<'_> {
         Some(self)
     }
 
-    fn read_addrs(&mut self, start_addr: u64, data: &mut [u8]) -> TargetResult<(), Self> {
+    fn read_addrs(&mut self, start_addr: u64, data: &mut [u8]) -> TargetResult<usize, Self> {
         match self.uc.mem_read(start_addr, data) {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(data.len()),
             Err(uc_error::READ_UNMAPPED) => Err(TargetError::Errno(1)),
             Err(_) => Err(TargetError::Fatal("Failed to read addr")),
         }
