@@ -41,8 +41,9 @@ pub fn udbserver(uc: &mut Unicorn<()>, port: u16, start_addr: u64) -> DynResult<
         .add_mem_hook(HookType::MEM_READ, 1, 0, |_: &mut Unicorn<'_, ()>, _: MemType, _: u64, _: usize, _: i64| true)
         .expect("Failed to add empty mem hook");
     if start_addr != 0 {
-        uc.add_code_hook(start_addr, start_addr, move |uc: &mut Unicorn<'_, ()>, _: u64, _: u32| {
-            udbserver_entry(uc, port, code_hook, mem_hook).expect("Failed to start udbserver")
+        let uc_ptr = uc as *mut Unicorn<()>;
+        uc.add_code_hook(start_addr, start_addr, move |_, _, _| {
+            udbserver_entry(unsafe { &mut *uc_ptr }, port, code_hook, mem_hook).expect("Failed to start udbserver")
         })
         .expect("Failed to add udbserver hook");
         Ok(())
@@ -55,10 +56,8 @@ fn udbserver_entry(uc: &mut Unicorn<()>, port: u16, code_hook: Hook, mem_hook: H
     if GDBSTUB.is_some() {
         return Ok(());
     }
-    let mut emu;
-    unsafe {
-        emu = emu::Emu::new(std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc), code_hook, mem_hook)?;
-    }
+    let uc_static = unsafe { std::mem::transmute::<&mut Unicorn<()>, &mut Unicorn<'static, ()>>(uc) };
+    let mut emu = emu::Emu::new(uc_static, code_hook, mem_hook)?;
     GDBSTUB.replace(GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(&mut emu)?);
     EMU.replace(emu);
     udbserver_loop()
