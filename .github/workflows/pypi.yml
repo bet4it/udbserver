@@ -11,7 +11,7 @@ jobs:
       matrix:
         include:
           - name: win_amd64
-            os: windows-lastest
+            os: windows-latest
           - name: macosx_12_0_x86_64
             os: macos-12
           - name: macosx_14_0_arm64
@@ -64,7 +64,7 @@ jobs:
     - name: '📤 Upload artifact'
       uses: actions/upload-artifact@v4
       with:
-         name: dist-${{ matrix.name }}
+         name: python-udbserver-${{ matrix.name }}
          path: ${{ github.workspace }}/bindings/python/dist/*
 
   publish:
@@ -74,7 +74,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
+          pattern: python-udbserver-*
           merge-multiple: true
           path: dist
 
