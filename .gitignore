@@ -1,5 +1,5 @@
 /target
-/build
+build
 dist
 udbserver.egg-info
 Cargo.lock
