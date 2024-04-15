@@ -50,6 +50,7 @@ jobs:
     - name: '🔧 Install pkg-config'
       if: matrix.os == 'ubuntu-latest'
       run: |
+        apt update
         apt install -y pkg-config
 
     - name: '🛠️ Install Python build'
