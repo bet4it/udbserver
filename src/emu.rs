@@ -1,7 +1,6 @@
 use crate::arch;
 use crate::reg::Register;
 use crate::DynResult;
-use crate::Hook;
 
 use gdbstub::common::Signal;
 use gdbstub::target;
@@ -11,10 +10,10 @@ use singlyton::{Singleton, SingletonOption};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
-use unicorn_engine::Unicorn;
+use unicorn_engine::{UcHookId, Unicorn};
 
 static STEP_STATE: Singleton<bool> = Singleton::new(false);
-static STEP_HOOK: SingletonOption<Hook> = SingletonOption::new();
+static STEP_HOOK: SingletonOption<UcHookId> = SingletonOption::new();
 static WATCH_ADDR: SingletonOption<u64> = SingletonOption::new();
 
 fn copy_to_buf(data: &[u8], buf: &mut [u8]) -> usize {
@@ -58,17 +57,17 @@ fn watch_cb(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _
 pub struct Emu {
     uc: &'static mut Unicorn<'static, ()>,
     reg: Register,
-    code_hook: Hook,
-    mem_hook: Hook,
-    bp_sw_hooks: HashMap<u64, Hook>,
-    bp_hw_hooks: HashMap<u64, Hook>,
-    wp_r_hooks: HashMap<u64, HashMap<u64, Hook>>,
-    wp_w_hooks: HashMap<u64, HashMap<u64, Hook>>,
-    wp_rw_hooks: HashMap<u64, HashMap<u64, Hook>>,
+    code_hook: UcHookId,
+    mem_hook: UcHookId,
+    bp_sw_hooks: HashMap<u64, UcHookId>,
+    bp_hw_hooks: HashMap<u64, UcHookId>,
+    wp_r_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
+    wp_w_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
+    wp_rw_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
 }
 
 impl Emu {
-    pub fn new(uc: &'static mut Unicorn<'static, ()>, code_hook: Hook, mem_hook: Hook) -> DynResult<Emu> {
+    pub fn new(uc: &'static mut Unicorn<'static, ()>, code_hook: UcHookId, mem_hook: UcHookId) -> DynResult<Emu> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
         let mode = Mode::from_bits(query_mode as i32).unwrap();

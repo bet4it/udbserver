@@ -11,13 +11,11 @@ use gdbstub::stub::{DisconnectReason, GdbStubBuilder, SingleThreadStopReason};
 use gdbstub::target::ext::breakpoints::WatchKind;
 use singlyton::SingletonOption;
 use std::borrow::BorrowMut;
-use std::ffi::c_void;
 use std::net::{TcpListener, TcpStream};
 use unicorn_engine::unicorn_const::HookType;
 use unicorn_engine::Unicorn;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
-type Hook = *mut c_void;
 
 static GDBSTUB: SingletonOption<GdbStubStateMachine<emu::Emu, TcpStream>> = SingletonOption::new();
 static EMU: SingletonOption<emu::Emu> = SingletonOption::new();
