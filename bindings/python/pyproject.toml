@@ -7,6 +7,7 @@ name = "udbserver"
 dynamic = ["version"]
 license = { text = "MIT License" }
 description = "Python bindings of udbserver"
+readme = "README.rst"
 authors = [{ name = "Bet4", email = "0xbet4@gmail.com" }]
 urls = { homepage = "https://github.com/bet4it/udbserver" }
 classifiers = [
