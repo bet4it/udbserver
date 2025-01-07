@@ -10,12 +10,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: win_amd64
+          - name: windows_x86_64
             os: windows-latest
-          - name: macosx_12_0_x86_64
-            os: macos-12
-          - name: macosx_14_0_arm64
-            os: macos-14
+          - name: macos_x86_64
+            os: macos-13
+          - name: macos_arm64
+            os: macos-15
           - name: manylinux2014_i686
             os: ubuntu-latest
             target: i686
