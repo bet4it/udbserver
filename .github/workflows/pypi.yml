@@ -1,0 +1,86 @@
+name: PyPI 📦 Distribution
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows_x86_64
+            os: windows-latest
+          - name: macos_x86_64
+            os: macos-13
+          - name: macos_arm64
+            os: macos-15
+          - name: manylinux2014_i686
+            os: ubuntu-latest
+            target: i686
+            container: messense/manylinux2014-cross:i686
+          - name: manylinux2014_x86_64
+            os: ubuntu-latest
+            target: x86_64
+            container: messense/manylinux2014-cross:x86_64
+          - name: manylinux2014_aarch64
+            os: ubuntu-latest
+            target: aarch64
+            container: messense/manylinux2014-cross:aarch64
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: '🦀️ Set up Rust'
+      if: matrix.os == 'ubuntu-latest'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        target: ${{ matrix.target }}-unknown-linux-gnu
+
+    - name: '🐍 Set up Python'
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+
+    - name: '🔧 Install pkg-config'
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        apt update
+        apt install -y pkg-config
+
+    - name: '🛠️ Install Python build'
+      run: |
+        python -m pip install build
+
+    - name: '🏗️ Build distribution'
+      run: |
+        cd bindings/python
+        python -m build --wheel --config-setting=--build-option=--plat-name=${{ matrix.name }}
+
+    - name: '📤 Upload artifact'
+      uses: actions/upload-artifact@v4
+      with:
+         name: python-udbserver-${{ matrix.name }}
+         path: ${{ github.workspace }}/bindings/python/dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-udbserver-*
+          merge-multiple: true
+          path: dist
+
+      - name: '🚀 Publish distribution to PyPI'
+        uses: pypa/gh-action-pypi-publish@master
+        with:
+          user: __token__
+          password: ${{ secrets.pypi_pass }}

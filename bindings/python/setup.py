@@ -1,27 +1,24 @@
-#!/usr/bin/env python3
-# encoding: utf-8
+import os
+import sysconfig
+from setuptools import setup
+from setuptools_rust import Binding, RustExtension
+from setuptools.command.build_ext import build_ext
+from wheel.bdist_wheel import bdist_wheel
 
-from setuptools import setup, Extension
+class CustomBuildExt(build_ext):
+    def get_ext_filename(self, ext_name):
+        filename = super().get_ext_filename(ext_name)
+        suffix = sysconfig.get_config_var('EXT_SUFFIX')
+        ext = os.path.splitext(filename)[1]
+        return filename.replace(suffix, '') + ext
 
+class CustomBdistWheel(bdist_wheel):
+    def get_tag(self):
+        _, _, plat = super().get_tag()
+        return ('py3', 'none', plat)
 
-rust_module = Extension('udbserver',
-                           sources=['udbserver.c'],
-                           libraries=['udbserver'],
-                           )
-
-setup (name = 'udbserver',
-       version = '0.1',
-       author = 'Bet4',
-       author_email = '0xbet4@gmail.com',
-       description = 'Python bindings of udbserver',
-       url = 'https://github.com/bet4it/udbserver',
-       license='MIT License',
-       classifiers=[
-           'Intended Audience :: Developers',
-           'License :: OSI Approved :: MIT License',
-           'Programming Language :: Python :: 3',
-           'Topic :: Software Development :: Debuggers',
-       ],
-       ext_modules = [rust_module],
-       py_modules = [],
-       )
+setup(
+    name='udbserver',
+    rust_extensions=[RustExtension('udbserver.libudbserver', binding=Binding.NoBinding, path='../../Cargo.toml', features=['capi'])],
+    cmdclass={'build_ext': CustomBuildExt, 'bdist_wheel': CustomBdistWheel},
+)
