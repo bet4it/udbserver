@@ -1,10 +1,8 @@
 # udbserver - Unicorn Emulator Debug Server
 
-When you do emulation with [Unicorn Engine](https://www.unicorn-engine.org/), do you want to inspect the inner state during every step?
+`udbserver` is a debugging plugin for [Unicorn Engine](https://www.unicorn-engine.org/) that implements the [GDB Remote Serial Protocol](https://sourceware.org/gdb/onlinedocs/gdb/Remote-Protocol.html).
 
-`udbserver` is a plugin for Unicorn, provides a debug server which implements [GDB Remote Serial Protocol](https://sourceware.org/gdb/onlinedocs/gdb/Remote-Protocol.html). You can connect it by a `GDB` client and do debugging as what you do on real program.
-
-`udbserver` can be used as a crate by Rust program, but it also provides a C library and bindings for other languages. You can use it inside most Unicorn based projects!
+It enables GDB-compatible debugging capabilities for Unicorn-based emulation projects, allowing you to inspect and control the emulation state through a GDB client.
 
 ## Features
 
@@ -15,7 +13,7 @@ When you do emulation with [Unicorn Engine](https://www.unicorn-engine.org/), do
 * [x] Watchpoint
 * [ ] Ctrl-C interrupt
 
-## Architectures support
+## Architectures Support
 
 * i386
 * x86\_64
@@ -26,54 +24,32 @@ When you do emulation with [Unicorn Engine](https://www.unicorn-engine.org/), do
 * PowerPC
 * RISC-V
 
-# Usage
+## Installation & Usage
 
-## API
+### Python
 
-`udbserver` only provides one API:
+The easiest way to get started is via pip:
 
-```c
-void udbserver(void* handle, uint16_t port, uint64_t start_addr);
-```
+``
+pip install udbserver
+``
 
-The `handle` should be the raw handle of a Unicorn instance, `port` is the port to be listened, `start_addr` is the address which when Unicorn runs at the debug server will start and wait to be connected. if `start_addr` is provided with `0`, the debug server will start instantly.
+Check out the [Python binding](bindings/python) for examples and documentation.
 
-You can call this API inside a Unicorn hook, so you can integrate `udbserver` inside other Unicorn based project easily.
+### Rust
 
-## Used in Rust
+As a native Rust project, you can use `udbserver` directly as a crate. Check out the [example](examples/server.rs):
 
-You can use `udbserver` as a crate in `Rust`.
+``
+cargo run --example server
+``
 
-You can check the [example](examples/server.rs) on how to use it.
+### Other Languages
 
-And you can try it by:
+`udbserver` provides bindings for several languages:
 
-```sh
-$ cargo run --example server
-```
-
-Then you can connect it with `gdb-multiarch`.
-
-## Installation
-
-`udbserver` provides a C-compatible set of library, header and pkg-config files, which help you to use it with other languages.
-
-To build and install it you need to use [cargo-c](https://crates.io/crates/cargo-c):
-
-```sh
-$ cargo install cargo-c
-$ mkdir build
-$ cargo cinstall --release --prefix=/usr --destdir build
-$ sudo cp -dr build/* /
-```
-
-## Language bindings
-
-After install the `udbserver` library, you can use `udbserver` in other languages.
-
-You could check the examples on how to use `udbserver` by different languages:
-
-* [C](bindings/c)
+* [C](bindings/c) (also provides C-compatible API for developing new bindings)
 * [Go](bindings/go)
 * [Java](bindings/java)
-* [Python](bindings/python)
+
+Please check the corresponding directories for language-specific installation and usage instructions.
