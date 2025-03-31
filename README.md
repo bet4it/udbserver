@@ -48,7 +48,7 @@ cargo run --example server
 
 `udbserver` provides bindings for several languages:
 
-* [C](bindings/c) (also provides C-compatible API for developing new bindings)
+* [C-compatible API](bindings/c)
 * [Go](bindings/go)
 * [Java](bindings/java)
 

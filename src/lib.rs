@@ -40,7 +40,11 @@ pub fn udbserver<T>(uc: &mut Unicorn<T>, port: u16, start_addr: u64) -> DynResul
         uc.add_code_hook(start_addr, start_addr, move |_, _, _| udbserver_start(port).expect("Failed to start udbserver"))
             .expect("Failed to add udbserver hook");
     }
-    let emu = emu::Emu::new(unsafe { std::mem::transmute(uc) }, code_hook, mem_hook)?;
+    let emu = emu::Emu::new(
+        unsafe { std::mem::transmute::<&mut Unicorn<T>, &'static mut Unicorn<'static, ()>>(uc) },
+        code_hook,
+        mem_hook,
+    )?;
     EMU.replace(emu);
     if start_addr == 0 {
         udbserver_start(port).expect("Failed to start udbserver");
@@ -96,6 +100,7 @@ fn udbserver_loop() -> DynResult<()> {
 }
 
 fn handle_disconnect(reason: DisconnectReason) -> DynResult<()> {
+    EMU.take();
     #[cfg(feature = "capi")]
     capi::clean();
     match reason {
