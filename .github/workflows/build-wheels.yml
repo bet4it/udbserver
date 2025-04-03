@@ -1,4 +1,4 @@
-name: PyPI 📦 Distribution
+name: 📦 Build Python Wheels
 
 on:
   push:
@@ -10,11 +10,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: windows_x86_64
+          - name: win_amd64
             os: windows-latest
-          - name: macos_x86_64
+          - name: macosx_13_7_x86_64
             os: macos-13
-          - name: macos_arm64
+          - name: macosx_15_2_arm64
             os: macos-15
           - name: manylinux2014_i686
             os: ubuntu-latest
@@ -73,6 +73,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/udbserver/
+    permissions:
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -81,7 +86,4 @@ jobs:
           path: dist
 
       - name: '🚀 Publish distribution to PyPI'
-        uses: pypa/gh-action-pypi-publish@master
-        with:
-          user: __token__
-          password: ${{ secrets.pypi_pass }}
+        uses: pypa/gh-action-pypi-publish@release/v1
