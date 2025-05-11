@@ -36,14 +36,14 @@ impl Register {
             Arch::MIPS => &mips::REGMAP,
             Arch::PPC => &ppc::REGMAP,
             Arch::RISCV => {
-                if mode.contains(Mode::RISCV32) {
+                if mode == Mode::RISCV32 {
                     &riscv32::REGMAP
                 } else {
                     &riscv64::REGMAP
                 }
             }
             Arch::X86 => {
-                if mode.contains(Mode::MODE_32) {
+                if mode == Mode::MODE_32 {
                     &x86::REGMAP
                 } else {
                     &x64::REGMAP
@@ -52,7 +52,7 @@ impl Register {
             _ => panic!("Unknown arch"),
         };
         let endian = {
-            if mode.contains(Mode::BIG_ENDIAN) {
+            if mode == Mode::BIG_ENDIAN {
                 Endian::Big
             } else {
                 Endian::Little

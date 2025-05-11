@@ -11,7 +11,7 @@ It enables GDB-compatible debugging capabilities for Unicorn-based emulation pro
 * [x] Single Step
 * [x] Breakpoint
 * [x] Watchpoint
-* [ ] Ctrl-C interrupt
+* [x] Ctrl-C interrupt
 
 ## Architectures Support
 

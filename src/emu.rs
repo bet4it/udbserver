@@ -6,15 +6,12 @@ use gdbstub::common::Signal;
 use gdbstub::target;
 use gdbstub::target::ext::breakpoints::WatchKind;
 use gdbstub::target::{TargetError, TargetResult};
-use singlyton::{Singleton, SingletonOption};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::convert::TryFrom;
+use std::ops::Range;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use unicorn_engine::unicorn_const::{uc_error, HookType, MemType, Mode, Query};
-use unicorn_engine::{UcHookId, Unicorn};
-
-static STEP_STATE: Singleton<bool> = Singleton::new(false);
-static STEP_HOOK: SingletonOption<UcHookId> = SingletonOption::new();
-static WATCH_ADDR: SingletonOption<u64> = SingletonOption::new();
+use unicorn_engine::{uc_engine, UcHookId, Unicorn};
 
 fn copy_to_buf(data: &[u8], buf: &mut [u8]) -> usize {
     let len = data.len();
@@ -33,67 +30,129 @@ fn copy_range_to_buf(data: &[u8], offset: u64, length: usize, buf: &mut [u8]) ->
     copy_to_buf(data, buf)
 }
 
-fn step_cb(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
-    if *STEP_STATE.get() {
-        STEP_STATE.replace(false);
-        return;
+fn code_cb(uc: &mut Unicorn<EmuState>, addr: u64, _size: u32) {
+    let state = uc.get_data_mut();
+    if state.in_step {
+        if let Some(tx_once) = state.tx_once.take() {
+            tx_once.send(()).unwrap();
+        } else {
+            state.tx_handle.send(None).unwrap();
+        }
+        state.in_step = false;
+        state.rx_done.recv().unwrap();
+    } else {
+        if state.sw_breakpoints.contains(&addr) || state.hw_breakpoints.contains(&addr) {
+            state.tx_handle.send(None).unwrap();
+            state.rx_done.recv().unwrap();
+        }
     }
-    if let Some(step_hook) = STEP_HOOK.take() {
-        uc.remove_hook(step_hook).expect("Failed to remove step hook");
-    }
-    crate::udbserver_resume(WATCH_ADDR.take()).expect("Failed to resume udbserver");
 }
 
-fn watch_cb(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
-    if WATCH_ADDR.is_none() {
-        WATCH_ADDR.replace(addr);
-        if STEP_HOOK.is_none() {
-            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_cb).expect("Failed to add code hook"));
+fn mem_cb(uc: &mut Unicorn<EmuState>, mem_type: MemType, addr: u64, size: usize, _value: i64) -> bool {
+    let state = uc.get_data();
+    if mem_type == MemType::READ {
+        for r in state.r_watchpoints.iter() {
+            if r.start < addr + size as u64 && addr < r.end {
+                state.tx_handle.send(Some(r.start)).unwrap();
+                state.rx_done.recv().unwrap();
+                return true;
+            }
+        }
+        for r in state.rw_watchpoints.iter() {
+            if r.start < addr + size as u64 && addr < r.end {
+                state.tx_handle.send(Some(r.start)).unwrap();
+                state.rx_done.recv().unwrap();
+                return true;
+            }
+        }
+    }
+    if mem_type == MemType::WRITE {
+        for r in state.w_watchpoints.iter() {
+            if r.start < addr + size as u64 && addr < r.end {
+                state.tx_handle.send(Some(r.start)).unwrap();
+                state.rx_done.recv().unwrap();
+                return true;
+            }
+        }
+        for r in state.rw_watchpoints.iter() {
+            if r.start < addr + size as u64 && addr < r.end {
+                state.tx_handle.send(Some(r.start)).unwrap();
+                state.rx_done.recv().unwrap();
+                return true;
+            }
         }
     }
     true
 }
 
-pub struct Emu {
-    uc: &'static mut Unicorn<'static, ()>,
+pub struct EmuState {
+    pub tx_handle: Sender<Option<u64>>,
+    pub rx_done: Receiver<()>,
+    pub tx_once: Option<Sender<()>>,
+    pub in_step: bool,
+    pub sw_breakpoints: HashSet<u64>,
+    pub hw_breakpoints: HashSet<u64>,
+    pub r_watchpoints: Vec<Range<u64>>,
+    pub w_watchpoints: Vec<Range<u64>>,
+    pub rw_watchpoints: Vec<Range<u64>>,
+}
+
+pub struct Emu<'a> {
+    uc: Unicorn<'a, EmuState>,
     reg: Register,
     code_hook: UcHookId,
     mem_hook: UcHookId,
-    bp_sw_hooks: HashMap<u64, UcHookId>,
-    bp_hw_hooks: HashMap<u64, UcHookId>,
-    wp_r_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
-    wp_w_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
-    wp_rw_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
+    pub rx_handle: Receiver<Option<u64>>,
+    tx_done: Sender<()>,
 }
 
-impl Emu {
-    pub fn new(uc: &'static mut Unicorn<'static, ()>, code_hook: UcHookId, mem_hook: UcHookId) -> DynResult<Emu> {
-        let arch = uc.get_arch();
-        let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
-        let mode = Mode::from_bits(query_mode as i32).unwrap();
-        let reg = Register::new(arch, mode);
-        Ok(Emu {
-            uc,
-            reg,
-            code_hook,
-            mem_hook,
-            bp_sw_hooks: HashMap::new(),
-            bp_hw_hooks: HashMap::new(),
-            wp_r_hooks: HashMap::new(),
-            wp_w_hooks: HashMap::new(),
-            wp_rw_hooks: HashMap::new(),
-        })
+impl<'a> Emu<'a> {
+    pub fn new(uc_handle: *mut uc_engine, _start_addr: u64, tx_once: Sender<()>) -> DynResult<Emu<'a>> {
+        let (tx_handle, rx_handle): (Sender<Option<u64>>, Receiver<Option<u64>>) = channel();
+        let (tx_done, rx_done): (Sender<()>, Receiver<()>) = channel();
+        let state = EmuState {
+            tx_handle,
+            rx_done,
+            tx_once: Some(tx_once),
+            in_step: true,
+            sw_breakpoints: HashSet::new(),
+            hw_breakpoints: HashSet::new(),
+            r_watchpoints: Vec::new(),
+            w_watchpoints: Vec::new(),
+            rw_watchpoints: Vec::new(),
+        };
+        if let Ok(mut uc) = unsafe { Unicorn::from_handle_with_data(uc_handle, state) } {
+            let arch = uc.get_arch();
+            let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
+            let mode = Mode::try_from(query_mode as i32).unwrap();
+            let reg: Register = Register::new(arch, mode);
+            let code_hook = uc.add_code_hook(1, 0, code_cb).expect("Failed to add code hook");
+            let mem_hook = uc
+                .add_mem_hook(HookType::MEM_READ | HookType::MEM_WRITE, 1, 0, mem_cb)
+                .expect("Failed to add mem hook");
+            Ok(Emu {
+                uc,
+                reg,
+                code_hook,
+                mem_hook,
+                rx_handle,
+                tx_done,
+            })
+        } else {
+            panic!("Failed to convert handle to Unicorn");
+        }
     }
 }
 
-impl Drop for Emu {
+impl<'a> Drop for Emu<'a> {
     fn drop(&mut self) {
-        self.uc.remove_hook(self.code_hook).expect("Failed to remove empty code hook");
-        self.uc.remove_hook(self.mem_hook).expect("Failed to remove empty mem hook");
+        self.uc.remove_hook(self.code_hook).expect("Failed to remove code hook");
+        self.uc.remove_hook(self.mem_hook).expect("Failed to remove mem hook");
+        self.tx_done.send(()).unwrap();
     }
 }
 
-impl target::Target for Emu {
+impl<'a> target::Target for Emu<'a> {
     type Arch = arch::GenericArch;
     type Error = &'static str;
 
@@ -113,7 +172,7 @@ impl target::Target for Emu {
     }
 }
 
-impl target::ext::base::singlethread::SingleThreadBase for Emu {
+impl<'a> target::ext::base::singlethread::SingleThreadBase for Emu<'a> {
     fn read_registers(&mut self, regs: &mut arch::GenericRegs) -> TargetResult<(), Self> {
         regs.buf = Vec::new();
         for reg in self.reg.list() {
@@ -166,8 +225,9 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu {
     }
 }
 
-impl target::ext::base::singlethread::SingleThreadResume for Emu {
+impl<'a> target::ext::base::singlethread::SingleThreadResume for Emu<'a> {
     fn resume(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
+        self.tx_done.send(()).unwrap();
         Ok(())
     }
 
@@ -177,20 +237,19 @@ impl target::ext::base::singlethread::SingleThreadResume for Emu {
     }
 }
 
-impl target::ext::base::singlethread::SingleThreadSingleStep for Emu {
+impl<'a> target::ext::base::singlethread::SingleThreadSingleStep for Emu<'a> {
     fn step(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
         if signal.is_some() {
             return Err("no support for stepping with signal");
         }
-
-        STEP_STATE.replace(true);
-        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_cb).map_err(|_| "Failed to add code hook")?);
-
+        let state = self.uc.get_data_mut();
+        state.in_step = true;
+        self.tx_done.send(()).unwrap();
         Ok(())
     }
 }
 
-impl target::ext::breakpoints::Breakpoints for Emu {
+impl<'a> target::ext::breakpoints::Breakpoints for Emu<'a> {
     #[inline(always)]
     fn support_sw_breakpoint(&mut self) -> Option<target::ext::breakpoints::SwBreakpointOps<Self>> {
         Some(self)
@@ -207,91 +266,53 @@ impl target::ext::breakpoints::Breakpoints for Emu {
     }
 }
 
-macro_rules! add_breakpoint {
-    ( $self:ident, $addr:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_cb) {
-            Ok(h) => h,
-            Err(_) => return Ok(false),
-        };
-        $self.$hook_map.insert($addr.into(), hook);
-        Ok(true)
-    }};
-    ( $self:ident, $mem_type:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), watch_cb) {
-            Ok(h) => h,
-            Err(_) => return Ok(false),
-        };
-        $self.$hook_map.entry($len).or_insert(HashMap::new()).insert($addr.into(), hook);
-        Ok(true)
-    }};
-}
-
-macro_rules! remove_breakpoint {
-    ( $self:ident, $addr:ident, $hook_map:ident ) => {{
-        let hook = match $self.$hook_map.remove(&$addr.into()) {
-            Some(h) => h,
-            None => return Ok(false),
-        };
-        match $self.uc.remove_hook(hook) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }};
-    ( $self:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
-        let map = match $self.$hook_map.get_mut(&$len) {
-            Some(h) => h,
-            None => return Ok(false),
-        };
-        let hook = match map.remove(&$addr.into()) {
-            Some(h) => h,
-            None => return Ok(false),
-        };
-        match $self.uc.remove_hook(hook) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }};
-}
-
-impl target::ext::breakpoints::SwBreakpoint for Emu {
+impl<'a> target::ext::breakpoints::SwBreakpoint for Emu<'a> {
     fn add_sw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
-        add_breakpoint!(self, addr, bp_sw_hooks)
+        let state = self.uc.get_data_mut();
+        Ok(state.sw_breakpoints.insert(addr))
     }
 
     fn remove_sw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
-        remove_breakpoint!(self, addr, bp_sw_hooks)
+        let state = self.uc.get_data_mut();
+        Ok(state.sw_breakpoints.remove(&addr))
     }
 }
 
-impl target::ext::breakpoints::HwBreakpoint for Emu {
+impl<'a> target::ext::breakpoints::HwBreakpoint for Emu<'a> {
     fn add_hw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
-        add_breakpoint!(self, addr, bp_hw_hooks)
+        let state = self.uc.get_data_mut();
+        Ok(state.hw_breakpoints.insert(addr))
     }
 
     fn remove_hw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
-        remove_breakpoint!(self, addr, bp_hw_hooks)
+        let state = self.uc.get_data_mut();
+        Ok(state.hw_breakpoints.remove(&addr))
     }
 }
 
-impl target::ext::breakpoints::HwWatchpoint for Emu {
+impl<'a> target::ext::breakpoints::HwWatchpoint for Emu<'a> {
     fn add_hw_watchpoint(&mut self, addr: u64, len: u64, kind: WatchKind) -> TargetResult<bool, Self> {
+        let state = self.uc.get_data_mut();
         match kind {
-            WatchKind::Read => add_breakpoint!(self, MEM_READ, addr, len, wp_r_hooks),
-            WatchKind::Write => add_breakpoint!(self, MEM_WRITE, addr, len, wp_w_hooks),
-            WatchKind::ReadWrite => add_breakpoint!(self, MEM_VALID, addr, len, wp_rw_hooks),
+            WatchKind::Read => state.r_watchpoints.push(addr..addr + len - 1),
+            WatchKind::Write => state.w_watchpoints.push(addr..addr + len - 1),
+            WatchKind::ReadWrite => state.rw_watchpoints.push(addr..addr + len - 1),
         }
+        Ok(true)
     }
 
     fn remove_hw_watchpoint(&mut self, addr: u64, len: u64, kind: WatchKind) -> TargetResult<bool, Self> {
+        let state = self.uc.get_data_mut();
         match kind {
-            WatchKind::Read => remove_breakpoint!(self, addr, len, wp_r_hooks),
-            WatchKind::Write => remove_breakpoint!(self, addr, len, wp_w_hooks),
-            WatchKind::ReadWrite => remove_breakpoint!(self, addr, len, wp_rw_hooks),
+            WatchKind::Read => state.r_watchpoints.retain(|r: &Range<u64>| *r != (addr..addr + len - 1)),
+            WatchKind::Write => state.w_watchpoints.retain(|r: &Range<u64>| *r != (addr..addr + len - 1)),
+            WatchKind::ReadWrite => state.rw_watchpoints.retain(|r: &Range<u64>| *r != (addr..addr + len - 1)),
         }
+        Ok(true)
     }
 }
 
-impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu {
+impl<'a> target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu<'a> {
     fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, buf: &mut [u8]) -> TargetResult<usize, Self> {
         let reg = self.reg.get(reg_id.0)?;
         if reg.1 <= 8 {
@@ -323,7 +344,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
     }
 }
 
-impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu {
+impl<'a> target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu<'a> {
     fn target_description_xml(&self, _annex: &[u8], offset: u64, length: usize, buf: &mut [u8]) -> TargetResult<usize, Self> {
         let xml = self.reg.description_xml().as_bytes();
         Ok(copy_range_to_buf(xml, offset, length, buf))

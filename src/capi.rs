@@ -2,15 +2,12 @@
 
 use singlyton::SingletonOption;
 use std::borrow::BorrowMut;
-use std::ffi::c_void;
-use unicorn_engine::Unicorn;
-
-type uc_handle = *mut c_void;
+use unicorn_engine::{uc_engine, Unicorn};
 
 static UNICORN: SingletonOption<Unicorn<()>> = SingletonOption::new();
 
 #[no_mangle]
-pub extern "C" fn udbserver(handle: uc_handle, port: u16, start_addr: u64) {
+pub extern "C" fn udbserver(handle: *mut uc_engine, port: u16, start_addr: u64) {
     if UNICORN.is_some() {
         return;
     }

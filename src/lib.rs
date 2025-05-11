@@ -5,20 +5,18 @@ mod arch;
 mod emu;
 mod reg;
 
+use gdbstub::common::Signal;
 use gdbstub::conn::ConnectionExt;
-use gdbstub::stub::state_machine::GdbStubStateMachine;
-use gdbstub::stub::{DisconnectReason, GdbStubBuilder, SingleThreadStopReason};
+use gdbstub::stub::run_blocking::WaitForStopReasonError;
+use gdbstub::stub::{run_blocking, DisconnectReason, GdbStub, SingleThreadStopReason};
 use gdbstub::target::ext::breakpoints::WatchKind;
-use singlyton::SingletonOption;
-use std::borrow::BorrowMut;
+use gdbstub::target::Target;
 use std::net::{TcpListener, TcpStream};
-use unicorn_engine::unicorn_const::HookType;
-use unicorn_engine::Unicorn;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+use unicorn_engine::{uc_engine, Unicorn};
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
-
-static GDBSTUB: SingletonOption<GdbStubStateMachine<emu::Emu, TcpStream>> = SingletonOption::new();
-static EMU: SingletonOption<emu::Emu> = SingletonOption::new();
 
 fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     let sockaddr = format!("0.0.0.0:{}", port);
@@ -31,76 +29,85 @@ fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     Ok(stream)
 }
 
-pub fn udbserver<T>(uc: &mut Unicorn<T>, port: u16, start_addr: u64) -> DynResult<()> {
-    let code_hook = uc.add_code_hook(1, 0, |_, _, _| {}).expect("Failed to add empty code hook");
-    let mem_hook = uc
-        .add_mem_hook(HookType::MEM_READ, 1, 0, |_, _, _, _, _| true)
-        .expect("Failed to add empty mem hook");
-    if start_addr != 0 {
-        uc.add_code_hook(start_addr, start_addr, move |_, _, _| udbserver_start(port).expect("Failed to start udbserver"))
-            .expect("Failed to add udbserver hook");
-    }
-    let emu = emu::Emu::new(
-        unsafe { std::mem::transmute::<&mut Unicorn<T>, &'static mut Unicorn<'static, ()>>(uc) },
-        code_hook,
-        mem_hook,
-    )?;
-    EMU.replace(emu);
-    if start_addr == 0 {
-        udbserver_start(port).expect("Failed to start udbserver");
-    }
-    Ok(())
+enum GdbEventLoop<'a> {
+    _Phantom(std::marker::PhantomData<&'a u64>),
 }
 
-fn udbserver_start(port: u16) -> DynResult<()> {
-    if GDBSTUB.is_some() {
-        return Ok(());
-    }
-    let gdbstub = GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(&mut *EMU.get_mut())?;
-    GDBSTUB.replace(gdbstub);
-    udbserver_loop()
-}
+impl<'a> run_blocking::BlockingEventLoop for GdbEventLoop<'a> {
+    type Target = emu::Emu<'a>;
+    type Connection = Box<dyn ConnectionExt<Error = std::io::Error>>;
+    type StopReason = SingleThreadStopReason<u64>;
 
-fn udbserver_resume(addr: Option<u64>) -> DynResult<()> {
-    let mut gdb = GDBSTUB.take().unwrap();
-    let reason = if let Some(watch_addr) = addr {
-        SingleThreadStopReason::Watch {
-            tid: (),
-            kind: WatchKind::Write,
-            addr: watch_addr,
-        }
-    } else {
-        SingleThreadStopReason::DoneStep
-    };
-    if let GdbStubStateMachine::Running(gdb_inner) = gdb {
-        match gdb_inner.report_stop(EMU.get_mut().borrow_mut(), reason) {
-            Ok(gdb_state) => gdb = gdb_state,
-            Err(_) => return Ok(()),
-        }
-    }
-    GDBSTUB.replace(gdb);
-    udbserver_loop()
-}
-
-fn udbserver_loop() -> DynResult<()> {
-    let mut gdb = GDBSTUB.take().unwrap();
-    loop {
-        gdb = match gdb {
-            GdbStubStateMachine::Idle(mut gdb_inner) => {
-                let byte = gdb_inner.borrow_conn().read()?;
-                gdb_inner.incoming_data(EMU.get_mut().borrow_mut(), byte)?
+    fn wait_for_stop_reason(
+        target: &mut Self::Target,
+        conn: &mut Self::Connection,
+    ) -> Result<
+        run_blocking::Event<Self::StopReason>,
+        run_blocking::WaitForStopReasonError<<Self::Target as Target>::Error, <Self::Connection as gdbstub::conn::Connection>::Error>,
+    > {
+        loop {
+            match target.rx_handle.try_recv() {
+                Ok(addr) => {
+                    let stop_reason = if let Some(watch_addr) = addr {
+                        SingleThreadStopReason::Watch {
+                            tid: (),
+                            kind: WatchKind::Write,
+                            addr: watch_addr,
+                        }
+                    } else {
+                        SingleThreadStopReason::DoneStep
+                    };
+                    return Ok(run_blocking::Event::TargetStopped(stop_reason));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => (),
+                Err(_) => {
+                    return Err(WaitForStopReasonError::Target("Failed to read addr"));
+                }
             }
-            GdbStubStateMachine::Running(_) => break,
-            GdbStubStateMachine::CtrlCInterrupt(_) => break,
-            GdbStubStateMachine::Disconnected(gdb_inner) => return handle_disconnect(gdb_inner.get_reason()),
+
+            if conn.peek().map(|b| b.is_some()).unwrap_or(false) {
+                let byte = conn.read().map_err(run_blocking::WaitForStopReasonError::Connection)?;
+                return Ok(run_blocking::Event::IncomingData(byte));
+            }
         }
     }
-    GDBSTUB.replace(gdb);
+
+    fn on_interrupt(_target: &mut Self::Target) -> Result<Option<Self::StopReason>, <Self::Target as Target>::Error> {
+        Ok(Some(SingleThreadStopReason::Signal(Signal::SIGINT)))
+    }
+}
+
+pub fn gdb_thread(mut emu: emu::Emu, port: u16, rx_once: Receiver<()>) {
+    rx_once.recv().unwrap();
+    let connection: Box<dyn ConnectionExt<Error = std::io::Error>> = Box::new(wait_for_tcp(port).unwrap());
+    let gdb = GdbStub::new(connection);
+    match gdb.run_blocking::<GdbEventLoop>(&mut emu) {
+        Ok(disconnect_reason) => {
+            let _ = handle_disconnect(disconnect_reason);
+        }
+        Err(e) => {
+            eprintln!("error occurred in GDB session: {}", e);
+        }
+    }
+}
+
+pub fn udbserver<T>(uc: &mut Unicorn<T>, port: u16, start_addr: u64) -> DynResult<()> {
+    let uc_handle = uc.get_handle() as usize;
+    let (tx_first, rx_first): (Sender<()>, Receiver<()>) = channel();
+    let (tx_once, rx_once): (Sender<()>, Receiver<()>) = channel();
+    thread::Builder::new()
+        .name("udbserver".to_string())
+        .spawn(move || {
+            let emu = emu::Emu::new(uc_handle as *mut uc_engine, start_addr, tx_once).unwrap();
+            tx_first.send(()).unwrap();
+            gdb_thread(emu, port, rx_once);
+        })
+        .unwrap();
+    rx_first.recv().unwrap();
     Ok(())
 }
 
 fn handle_disconnect(reason: DisconnectReason) -> DynResult<()> {
-    EMU.take();
     #[cfg(feature = "capi")]
     capi::clean();
     match reason {
