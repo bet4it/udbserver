@@ -70,7 +70,7 @@ impl Emu {
     pub fn new(uc: &'static mut Unicorn<'static, ()>, code_hook: UcHookId, mem_hook: UcHookId) -> DynResult<Emu> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
-        let mode = Mode::from_bits(query_mode as i32).unwrap();
+        let mode = Mode::try_from(query_mode as i32).unwrap();
         let reg = Register::new(arch, mode);
         Ok(Emu {
             uc,

@@ -3,7 +3,7 @@
 use singlyton::SingletonOption;
 use std::borrow::BorrowMut;
 use std::ffi::c_void;
-use unicorn_engine::Unicorn;
+use unicorn_engine::{Unicorn, uc_engine};
 
 type uc_handle = *mut c_void;
 
@@ -14,7 +14,7 @@ pub extern "C" fn udbserver(handle: uc_handle, port: u16, start_addr: u64) {
     if UNICORN.is_some() {
         return;
     }
-    if let Ok(unicorn) = unsafe { Unicorn::from_handle(handle) } {
+    if let Ok(unicorn) = unsafe { Unicorn::from_handle(handle as *mut uc_engine) } {
         UNICORN.replace(unicorn);
     } else {
         panic!("Failed to convert handle to Unicorn");

@@ -58,8 +58,26 @@ jobs:
       run: |
         python -m pip install build
 
-    - name: '🏗️ Build distribution'
+
+    - name: '🏗️ Build distribution (Windows/MacOS)'
+      if: matrix.os != 'ubuntu-latest'
       run: |
+        cd bindings/python
+        python -m build --wheel --config-setting=--build-option=--plat-name=${{ matrix.name }}
+
+    - name: '🏗️ Build distribution (Linux)'
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        if [ "${{ matrix.target }}" = "aarch64" ]; then
+          apt-get install -y libc6-dev-arm64-cross
+          export BINDGEN_EXTRA_CLANG_ARGS="-I/usr/aarch64-linux-gnu/include"
+        fi
+
+        if [ "${{ matrix.target }}" = "i686" ]; then
+          apt-get install -y libc6-dev-i386-cross
+          export BINDGEN_EXTRA_CLANG_ARGS="-I/usr/i686-linux-gnu/include"
+        fi
+
         cd bindings/python
         python -m build --wheel --config-setting=--build-option=--plat-name=${{ matrix.name }}
 
