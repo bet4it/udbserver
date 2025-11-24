@@ -1,0 +1,27 @@
+name: ⚙️ Cargo Build & Test
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    name: Cargo Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: '📥 Checkout Repository'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🦀 Install Rust Toolchain"
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: "🔨 Build"
+        run: cargo build --verbose --examples
+
+      - name: "🧪 Test"
+        run: cargo test --verbose --examples
