@@ -25,3 +25,9 @@ jobs:
 
       - name: "🧪 Test"
         run: cargo test --verbose --examples
+
+      - name: "📎 Lint"
+        run: cargo clippy --verbose --examples
+
+      - name: "✨ Check Format"
+        run: cargo fmt --check
