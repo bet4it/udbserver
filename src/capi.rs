@@ -3,7 +3,7 @@
 use singlyton::SingletonOption;
 use std::borrow::BorrowMut;
 use std::ffi::c_void;
-use unicorn_engine::{Unicorn, uc_engine};
+use unicorn_engine::{uc_engine, Unicorn};
 
 type uc_handle = *mut c_void;
 
