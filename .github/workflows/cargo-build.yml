@@ -17,17 +17,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "🦀 Install Rust Toolchain"
+      - name: '🦀 Install Rust Toolchain'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: "🔨 Build"
+      - name: '🔨 Build'
         run: cargo build --verbose --examples
 
-      - name: "🧪 Test"
+      - name: '🧪 Test'
         run: cargo test --verbose --examples
 
-      - name: "📎 Lint"
+      - name: '📎 Lint'
         run: cargo clippy --verbose --examples
 
-      - name: "✨ Check Format"
+      - name: '✨ Check Format'
         run: cargo fmt --check

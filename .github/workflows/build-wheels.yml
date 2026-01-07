@@ -12,9 +12,9 @@ jobs:
         include:
           - name: win_amd64
             os: windows-latest
-          - name: macosx_13_7_x86_64
-            os: macos-13
-          - name: macosx_15_2_arm64
+          - name: macosx_15_0_x86_64
+            os: macos-15-intel
+          - name: macosx_15_0_arm64
             os: macos-15
           - name: manylinux2014_i686
             os: ubuntu-latest
