@@ -33,7 +33,7 @@ fn copy_range_to_buf(data: &[u8], offset: u64, length: usize, buf: &mut [u8]) ->
     copy_to_buf(data, buf)
 }
 
-fn step_cb(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
+fn step_cb<T: 'static>(uc: &mut Unicorn<T>, _addr: u64, _size: u32) {
     if *STEP_STATE.get() {
         STEP_STATE.replace(false);
         return;
@@ -41,21 +41,21 @@ fn step_cb(uc: &mut Unicorn<()>, _addr: u64, _size: u32) {
     if let Some(step_hook) = STEP_HOOK.take() {
         uc.remove_hook(step_hook).expect("Failed to remove step hook");
     }
-    crate::udbserver_resume(WATCH_ADDR.take()).expect("Failed to resume udbserver");
+    crate::udbserver_resume::<T>(WATCH_ADDR.take()).expect("Failed to resume udbserver");
 }
 
-fn watch_cb(uc: &mut Unicorn<()>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
+fn watch_cb<T: 'static>(uc: &mut Unicorn<T>, _mem_type: MemType, addr: u64, _size: usize, _value: i64) -> bool {
     if WATCH_ADDR.is_none() {
         WATCH_ADDR.replace(addr);
         if STEP_HOOK.is_none() {
-            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_cb).expect("Failed to add code hook"));
+            STEP_HOOK.replace(uc.add_code_hook(1, 0, step_cb::<T>).expect("Failed to add code hook"));
         }
     }
     true
 }
 
-pub struct Emu {
-    uc: &'static mut Unicorn<'static, ()>,
+pub struct Emu<T: 'static> {
+    uc: &'static mut Unicorn<'static, T>,
     reg: Register,
     code_hook: UcHookId,
     mem_hook: UcHookId,
@@ -66,8 +66,8 @@ pub struct Emu {
     wp_rw_hooks: HashMap<u64, HashMap<u64, UcHookId>>,
 }
 
-impl Emu {
-    pub fn new(uc: &'static mut Unicorn<'static, ()>, code_hook: UcHookId, mem_hook: UcHookId) -> DynResult<Emu> {
+impl<T: 'static> Emu<T> {
+    pub fn new(uc: &'static mut Unicorn<'static, T>, code_hook: UcHookId, mem_hook: UcHookId) -> DynResult<Emu<T>> {
         let arch = uc.get_arch();
         let query_mode = uc.query(Query::MODE).expect("Failed to query mode");
         let mode = Mode::try_from(query_mode as i32).unwrap();
@@ -86,14 +86,14 @@ impl Emu {
     }
 }
 
-impl Drop for Emu {
+impl<T: 'static> Drop for Emu<T> {
     fn drop(&mut self) {
         self.uc.remove_hook(self.code_hook).expect("Failed to remove empty code hook");
         self.uc.remove_hook(self.mem_hook).expect("Failed to remove empty mem hook");
     }
 }
 
-impl target::Target for Emu {
+impl<T: 'static> target::Target for Emu<T> {
     type Arch = arch::GenericArch;
     type Error = &'static str;
 
@@ -113,7 +113,7 @@ impl target::Target for Emu {
     }
 }
 
-impl target::ext::base::singlethread::SingleThreadBase for Emu {
+impl<T: 'static> target::ext::base::singlethread::SingleThreadBase for Emu<T> {
     fn read_registers(&mut self, regs: &mut arch::GenericRegs) -> TargetResult<(), Self> {
         regs.buf = Vec::new();
         for reg in self.reg.list() {
@@ -166,7 +166,7 @@ impl target::ext::base::singlethread::SingleThreadBase for Emu {
     }
 }
 
-impl target::ext::base::singlethread::SingleThreadResume for Emu {
+impl<T: 'static> target::ext::base::singlethread::SingleThreadResume for Emu<T> {
     fn resume(&mut self, _signal: Option<Signal>) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -177,20 +177,20 @@ impl target::ext::base::singlethread::SingleThreadResume for Emu {
     }
 }
 
-impl target::ext::base::singlethread::SingleThreadSingleStep for Emu {
+impl<T: 'static> target::ext::base::singlethread::SingleThreadSingleStep for Emu<T> {
     fn step(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
         if signal.is_some() {
             return Err("no support for stepping with signal");
         }
 
         STEP_STATE.replace(true);
-        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_cb).map_err(|_| "Failed to add code hook")?);
+        STEP_HOOK.replace(self.uc.add_code_hook(1, 0, step_cb::<T>).map_err(|_| "Failed to add code hook")?);
 
         Ok(())
     }
 }
 
-impl target::ext::breakpoints::Breakpoints for Emu {
+impl<T: 'static> target::ext::breakpoints::Breakpoints for Emu<T> {
     #[inline(always)]
     fn support_sw_breakpoint(&mut self) -> Option<target::ext::breakpoints::SwBreakpointOps<'_, Self>> {
         Some(self)
@@ -209,7 +209,7 @@ impl target::ext::breakpoints::Breakpoints for Emu {
 
 macro_rules! add_breakpoint {
     ( $self:ident, $addr:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_cb) {
+        let hook = match $self.uc.add_code_hook($addr.into(), $addr.into(), step_cb::<T>) {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
@@ -217,7 +217,10 @@ macro_rules! add_breakpoint {
         Ok(true)
     }};
     ( $self:ident, $mem_type:ident, $addr:ident, $len:ident, $hook_map:ident ) => {{
-        let hook = match $self.uc.add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), watch_cb) {
+        let hook = match $self
+            .uc
+            .add_mem_hook(HookType::$mem_type, $addr.into(), ($addr + $len - 1).into(), watch_cb::<T>)
+        {
             Ok(h) => h,
             Err(_) => return Ok(false),
         };
@@ -253,7 +256,7 @@ macro_rules! remove_breakpoint {
     }};
 }
 
-impl target::ext::breakpoints::SwBreakpoint for Emu {
+impl<T: 'static> target::ext::breakpoints::SwBreakpoint for Emu<T> {
     fn add_sw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_sw_hooks)
     }
@@ -263,7 +266,7 @@ impl target::ext::breakpoints::SwBreakpoint for Emu {
     }
 }
 
-impl target::ext::breakpoints::HwBreakpoint for Emu {
+impl<T: 'static> target::ext::breakpoints::HwBreakpoint for Emu<T> {
     fn add_hw_breakpoint(&mut self, addr: u64, _kind: usize) -> TargetResult<bool, Self> {
         add_breakpoint!(self, addr, bp_hw_hooks)
     }
@@ -273,7 +276,7 @@ impl target::ext::breakpoints::HwBreakpoint for Emu {
     }
 }
 
-impl target::ext::breakpoints::HwWatchpoint for Emu {
+impl<T: 'static> target::ext::breakpoints::HwWatchpoint for Emu<T> {
     fn add_hw_watchpoint(&mut self, addr: u64, len: u64, kind: WatchKind) -> TargetResult<bool, Self> {
         match kind {
             WatchKind::Read => add_breakpoint!(self, MEM_READ, addr, len, wp_r_hooks),
@@ -291,7 +294,7 @@ impl target::ext::breakpoints::HwWatchpoint for Emu {
     }
 }
 
-impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu {
+impl<T: 'static> target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu<T> {
     fn read_register(&mut self, _tid: (), reg_id: arch::GenericRegId, buf: &mut [u8]) -> TargetResult<usize, Self> {
         let reg = self.reg.get(reg_id.0)?;
         if reg.1 <= 8 {
@@ -323,7 +326,7 @@ impl target::ext::base::single_register_access::SingleRegisterAccess<()> for Emu
     }
 }
 
-impl target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu {
+impl<T: 'static> target::ext::target_description_xml_override::TargetDescriptionXmlOverride for Emu<T> {
     fn target_description_xml(&self, _annex: &[u8], offset: u64, length: usize, buf: &mut [u8]) -> TargetResult<usize, Self> {
         let xml = self.reg.description_xml().as_bytes();
         Ok(copy_range_to_buf(xml, offset, length, buf))
