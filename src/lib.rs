@@ -18,8 +18,8 @@ use unicorn_engine::Unicorn;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-static GDBSTUB: SingletonOption<Box<dyn Any>> = SingletonOption::new();
-static EMU: SingletonOption<Box<dyn Any>> = SingletonOption::new();
+static GDBSTUB: SingletonOption<*mut ()> = SingletonOption::new();
+static EMU: SingletonOption<*mut ()> = SingletonOption::new();
 
 fn wait_for_tcp(port: u16) -> DynResult<TcpStream> {
     let sockaddr = format!("0.0.0.0:{}", port);
@@ -48,7 +48,7 @@ pub fn udbserver<T: 'static>(uc: &mut Unicorn<T>, port: u16, start_addr: u64) ->
         code_hook,
         mem_hook,
     )?;
-    EMU.replace(Box::new(emu));
+    EMU.replace(Box::into_raw(Box::new(emu)).cast());
     if start_addr == 0 {
         udbserver_start::<T>(port).expect("Failed to start udbserver");
     }
@@ -59,20 +59,13 @@ fn udbserver_start<T: 'static>(port: u16) -> DynResult<()> {
     if GDBSTUB.is_some() {
         return Ok(());
     }
-    {
-        let mut emu_any = EMU.get_mut();
-        let emu = emu_any.downcast_mut::<emu::Emu<T>>().expect("Failed to downcast EMU");
-        let gdbstub = GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(emu)?;
-        GDBSTUB.replace(Box::new(gdbstub));
-    }
+    let gdbstub = GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(emu_mut::<T>())?;
+    GDBSTUB.replace(Box::into_raw(Box::new(gdbstub)).cast());
     udbserver_loop::<T>()
 }
 
-pub(crate) fn udbserver_resume<T: 'static>(addr: Option<u64>) -> DynResult<()> {
-    let gdb_any = GDBSTUB.take().unwrap();
-    let mut gdb = *gdb_any
-        .downcast::<GdbStubStateMachine<emu::Emu<T>, TcpStream>>()
-        .expect("Failed to downcast GDBSTUB");
+fn udbserver_resume<T: 'static>(addr: Option<u64>) -> DynResult<()> {
+    let mut gdb = gdbstub_take::<T>();
     let reason = if let Some(watch_addr) = addr {
         SingleThreadStopReason::Watch {
             tid: (),
@@ -83,41 +76,38 @@ pub(crate) fn udbserver_resume<T: 'static>(addr: Option<u64>) -> DynResult<()> {
         SingleThreadStopReason::DoneStep
     };
     if let GdbStubStateMachine::Running(gdb_inner) = gdb {
-        let mut emu_any = EMU.get_mut();
-        let emu = emu_any.downcast_mut::<emu::Emu<T>>().expect("Failed to downcast EMU");
-        match gdb_inner.report_stop(emu.borrow_mut(), reason) {
+        match gdb_inner.report_stop(emu_mut::<T>().borrow_mut(), reason) {
             Ok(gdb_state) => gdb = gdb_state,
             Err(_) => return Ok(()),
         }
     }
-    GDBSTUB.replace(Box::new(gdb));
+    gdbstub_replace(gdb);
     udbserver_loop::<T>()
 }
 
 fn udbserver_loop<T: 'static>() -> DynResult<()> {
-    let gdb_any = GDBSTUB.take().unwrap();
-    let mut gdb = *gdb_any
-        .downcast::<GdbStubStateMachine<emu::Emu<T>, TcpStream>>()
-        .expect("Failed to downcast GDBSTUB");
+    let mut gdb = gdbstub_take::<T>();
     loop {
         gdb = match gdb {
             GdbStubStateMachine::Idle(mut gdb_inner) => {
                 let byte = gdb_inner.borrow_conn().read()?;
-                let mut emu_any = EMU.get_mut();
-                let emu = emu_any.downcast_mut::<emu::Emu<T>>().expect("Failed to downcast EMU");
-                gdb_inner.incoming_data(emu.borrow_mut(), byte)?
+                gdb_inner.incoming_data(emu_mut::<T>().borrow_mut(), byte)?
             }
             GdbStubStateMachine::Running(_) => break,
             GdbStubStateMachine::CtrlCInterrupt(_) => break,
-            GdbStubStateMachine::Disconnected(gdb_inner) => return handle_disconnect(gdb_inner.get_reason()),
+            GdbStubStateMachine::Disconnected(gdb_inner) => return handle_disconnect::<T>(gdb_inner.get_reason()),
         }
     }
-    GDBSTUB.replace(Box::new(gdb));
+    gdbstub_replace(gdb);
     Ok(())
 }
 
-fn handle_disconnect(reason: DisconnectReason) -> DynResult<()> {
-    EMU.take();
+fn handle_disconnect<T: 'static>(reason: DisconnectReason) -> DynResult<()> {
+    if let Some(emu_ptr) = EMU.take() {
+        unsafe {
+            drop(Box::from_raw(emu_ptr.cast::<emu::Emu<T>>()));
+        }
+    }
     #[cfg(feature = "capi")]
     capi::clean();
     match reason {
@@ -138,4 +128,18 @@ fn handle_disconnect(reason: DisconnectReason) -> DynResult<()> {
             Ok(())
         }
     }
+}
+
+fn emu_mut<T>() -> &'static mut emu::Emu<T> {
+    let emu_ptr = *EMU.get();
+    unsafe { &mut *emu_ptr.cast::<emu::Emu<T>>() }
+}
+
+fn gdbstub_take<T: 'static>() -> GdbStubStateMachine<'static, emu::Emu<T>, TcpStream> {
+    let gdb_ptr = GDBSTUB.take().expect("GDB stub not initialized");
+    unsafe { *Box::from_raw(gdb_ptr.cast::<GdbStubStateMachine<'static, emu::Emu<T>, TcpStream>>()) }
+}
+
+fn gdbstub_replace<T: 'static>(gdb: GdbStubStateMachine<'static, emu::Emu<T>, TcpStream>) {
+    GDBSTUB.replace(Box::into_raw(Box::new(gdb)).cast());
 }

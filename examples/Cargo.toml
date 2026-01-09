@@ -1,0 +1,9 @@
+[package]
+name = "udbserver_example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+udbserver = { path= ".." }
+unicorn-engine = { version = "2.1.4", features = ["dynamic_linkage"] }
