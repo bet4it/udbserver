@@ -10,7 +10,6 @@ use gdbstub::stub::state_machine::GdbStubStateMachine;
 use gdbstub::stub::{DisconnectReason, GdbStubBuilder, SingleThreadStopReason};
 use gdbstub::target::ext::breakpoints::WatchKind;
 use singlyton::SingletonOption;
-use std::any::Any;
 use std::borrow::BorrowMut;
 use std::net::{TcpListener, TcpStream};
 use unicorn_engine::unicorn_const::HookType;
