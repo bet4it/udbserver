@@ -59,10 +59,12 @@ fn udbserver_start<T: 'static>(port: u16) -> DynResult<()> {
     if GDBSTUB.is_some() {
         return Ok(());
     }
-    let mut emu_any = EMU.get_mut();
-    let emu = emu_any.downcast_mut::<emu::Emu<T>>().expect("Failed to downcast EMU");
-    let gdbstub = GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(emu)?;
-    GDBSTUB.replace(Box::new(gdbstub));
+    {
+        let mut emu_any = EMU.get_mut();
+        let emu = emu_any.downcast_mut::<emu::Emu<T>>().expect("Failed to downcast EMU");
+        let gdbstub = GdbStubBuilder::new(wait_for_tcp(port)?).build()?.run_state_machine(emu)?;
+        GDBSTUB.replace(Box::new(gdbstub));
+    }
     udbserver_loop::<T>()
 }
 
