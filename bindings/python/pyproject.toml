@@ -5,14 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "udbserver"
 dynamic = ["version"]
-license = { text = "MIT License" }
+license = "MIT"
 description = "Python bindings of udbserver"
 readme = "README.rst"
 authors = [{ name = "Bet4", email = "0xbet4@gmail.com" }]
 urls = { homepage = "https://github.com/bet4it/udbserver" }
 classifiers = [
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Operating System :: POSIX",
   "Operating System :: MacOS :: MacOS X",

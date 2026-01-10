@@ -3,7 +3,7 @@ import sysconfig
 from setuptools import setup
 from setuptools_rust import Binding, RustExtension
 from setuptools.command.build_ext import build_ext
-from wheel.bdist_wheel import bdist_wheel
+from setuptools.command.bdist_wheel import bdist_wheel
 
 class CustomBuildExt(build_ext):
     def get_ext_filename(self, ext_name):
