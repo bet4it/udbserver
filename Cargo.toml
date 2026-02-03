@@ -18,7 +18,7 @@ crate-type = ["lib"]
 capi = []
 
 [dependencies]
-gdbstub = "0.7"
+gdbstub = "0.7.9"
 singlyton = "4"
 unicorn-engine = { version = "2.1.4", features = ["dynamic_linkage"] }
 
