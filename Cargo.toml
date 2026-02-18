@@ -1,6 +1,6 @@
 [package]
 name = "udbserver"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Bet4 <0xbet4@gmail.com>"]
 description = "Provide Unicorn emulator with a debug server"
 license = "MIT"
