@@ -12,6 +12,7 @@ use gdbstub::target::ext::breakpoints::WatchKind;
 use singlyton::SingletonOption;
 use std::any::Any;
 use std::borrow::BorrowMut;
+use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream};
 use unicorn_engine::unicorn_const::HookType;
 use unicorn_engine::Unicorn;
@@ -94,6 +95,13 @@ pub(crate) fn udbserver_resume<T: 'static>(addr: Option<u64>) -> DynResult<()> {
     udbserver_loop::<T>()
 }
 
+fn is_disconnect_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe | ErrorKind::NotConnected
+    )
+}
+
 fn udbserver_loop<T: 'static>() -> DynResult<()> {
     let gdb_any = GDBSTUB.take().unwrap();
     let mut gdb = *gdb_any
@@ -102,7 +110,11 @@ fn udbserver_loop<T: 'static>() -> DynResult<()> {
     loop {
         gdb = match gdb {
             GdbStubStateMachine::Idle(mut gdb_inner) => {
-                let byte = gdb_inner.borrow_conn().read()?;
+                let byte = match gdb_inner.borrow_conn().read() {
+                    Ok(byte) => byte,
+                    Err(error) if is_disconnect_error(&error) => return handle_disconnect(DisconnectReason::Disconnect),
+                    Err(error) => return Err(Box::new(error)),
+                };
                 let mut emu_any = EMU.get_mut();
                 let emu = emu_any.downcast_mut::<emu::Emu<T>>().expect("Failed to downcast EMU");
                 gdb_inner.incoming_data(emu.borrow_mut(), byte)?
