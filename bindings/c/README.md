@@ -5,13 +5,18 @@
 `udbserver` provides a simple API:
 
 ```c
-void udbserver(void* handle, uint16_t port, uint64_t start_addr);
+int32_t udbserver(void* handle, uint16_t port, uint64_t start_addr);
 ```
 
 Parameters:
 - `handle`: The raw handle of a Unicorn instance
 - `port`: The port number to listen on
 - `start_addr`: The address at which the debug server will start and wait for connection. If set to `0`, the debug server starts immediately
+
+Return value:
+- `0`: success
+- `-1`: recoverable runtime error
+- `-2`: panic trapped at the FFI boundary
 
 You can call this API inside a Unicorn hook to integrate `udbserver` within other Unicorn-based projects.
 
