@@ -1,8 +1,9 @@
-import os
 import ctypes
+import os
 import sys
+from ctypes import c_int, c_uint16, c_uint64, c_void_p
+
 from unicorn import Uc
-from ctypes import c_void_p, c_uint16, c_uint64
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -14,9 +15,17 @@ else:
 _udbserver_lib = ctypes.cdll.LoadLibrary(os.path.join(_current_dir, _library_file))
 
 _udbserver_lib.udbserver.argtypes = [c_void_p, c_uint16, c_uint64]
-_udbserver_lib.udbserver.restype = None
+_udbserver_lib.udbserver.restype = c_int
+
 
 def udbserver(uc: Uc, port: int = 1234, start_addr: int = 0):
     """Start udbserver.
     """
-    _udbserver_lib.udbserver(int(uc._uch.value), port, start_addr)
+    status = _udbserver_lib.udbserver(int(uc._uch.value), port, start_addr)
+    if status == 0:
+        return
+    if status == -1:
+        raise RuntimeError("udbserver failed with a runtime error")
+    if status == -2:
+        raise RuntimeError("udbserver panicked at the FFI boundary")
+    raise RuntimeError(f"udbserver failed with status code {status}")
