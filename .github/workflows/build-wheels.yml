@@ -12,10 +12,12 @@ jobs:
         include:
           - name: win_amd64
             os: windows-latest
-          - name: macosx_15_0_x86_64
+          - name: macosx_10_12_x86_64
             os: macos-15-intel
-          - name: macosx_15_0_arm64
+            deployment_target: "10.12"
+          - name: macosx_11_0_arm64
             os: macos-15
+            deployment_target: "11.0"
           - name: manylinux2014_i686
             os: ubuntu-latest
             target: i686
@@ -59,8 +61,16 @@ jobs:
         python -m pip install build
 
 
-    - name: '🏗️ Build distribution (Windows/MacOS)'
-      if: matrix.os != 'ubuntu-latest'
+    - name: '🏗️ Build distribution (Windows)'
+      if: matrix.os == 'windows-latest'
+      run: |
+        cd bindings/python
+        python -m build --wheel --config-setting=--build-option=--plat-name=${{ matrix.name }}
+
+    - name: '🏗️ Build distribution (macOS)'
+      if: startsWith(matrix.os, 'macos-')
+      env:
+        MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
       run: |
         cd bindings/python
         python -m build --wheel --config-setting=--build-option=--plat-name=${{ matrix.name }}
